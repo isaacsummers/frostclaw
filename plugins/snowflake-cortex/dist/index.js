@@ -9,7 +9,19 @@ function getApiKey() {
 function getBaseURL() {
   return process.env.SNOWFLAKE_BASE_URL ?? "";
 }
-var ANTHROPIC_BETA = "interleaved-thinking-2025-05-14";
+var ANTHROPIC_BETA_DEFAULT = [
+  "interleaved-thinking-2025-05-14",
+  "output-128k-2025-02-19",
+  "effort-2025-11-24",
+  "token-efficient-tools-2025-02-19"
+].join(",");
+var ANTHROPIC_BETA_1M = [
+  "context-1m-2025-08-07",
+  "interleaved-thinking-2025-05-14",
+  "output-128k-2025-02-19",
+  "effort-2025-11-24",
+  "token-efficient-tools-2025-02-19"
+].join(",");
 function isClaudeModel(modelId) {
   return modelId.toLowerCase().startsWith("claude");
 }
@@ -19,8 +31,10 @@ function modelSupportsTools(modelId) {
 var CLAUDE_MODELS = [
   { id: "claude-opus-4-5", name: "Claude Opus 4.5", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
-  { id: "claude-opus-4-6", name: "Claude Opus 4.6", reasoning: true, contextWindow: 1e6, maxTokens: 128000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true, contextWindow: 1e6, maxTokens: 128000, input: ["text", "image"] }
+  { id: "claude-opus-4-6", name: "Claude Opus 4.6", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
+  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
+  { id: "claude-opus-4-6-1m", name: "Claude Opus 4.6 (1M)", reasoning: true, contextWindow: 1e6, maxTokens: 128000, input: ["text", "image"], extendedContext: true },
+  { id: "claude-sonnet-4-6-1m", name: "Claude Sonnet 4.6 (1M)", reasoning: true, contextWindow: 1e6, maxTokens: 128000, input: ["text", "image"], extendedContext: true }
 ];
 var OPENAI_MODELS = [
   { id: "openai-gpt-5", name: "GPT-5", reasoning: true, contextWindow: 128000, maxTokens: 32768, input: ["text", "image"] },
@@ -39,8 +53,8 @@ var OPEN_SOURCE_MODELS = [
   { id: "snowflake-arctic", name: "Snowflake Arctic", reasoning: false, contextWindow: 4096, maxTokens: 4096, input: ["text"] }
 ];
 var ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-function anthropicBetaHeaders() {
-  return { "anthropic-beta": ANTHROPIC_BETA };
+function anthropicBetaHeaders(extendedContext = false) {
+  return { "anthropic-beta": extendedContext ? ANTHROPIC_BETA_1M : ANTHROPIC_BETA_DEFAULT };
 }
 function buildClaudeModelDef(spec) {
   return {
@@ -52,7 +66,7 @@ function buildClaudeModelDef(spec) {
     cost: ZERO_COST,
     contextWindow: spec.contextWindow,
     maxTokens: spec.maxTokens,
-    headers: anthropicBetaHeaders(),
+    headers: anthropicBetaHeaders(spec.extendedContext),
     compat: { supportsTools: true }
   };
 }
@@ -139,6 +153,9 @@ var snowflake_cortex_default = definePluginEntry({
         if (!modelSupportsTools(ctx.modelId))
           return [];
         return ctx.tools;
+      },
+      normalizeModelId(ctx) {
+        return ctx.modelId.replace(/-1m$/, "") || null;
       },
       wrapStreamFn(ctx) {
         if (!ctx.streamFn)

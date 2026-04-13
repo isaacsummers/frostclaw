@@ -17,6 +17,7 @@ import {
   type ProviderWrapStreamFnContext,
   type ProviderNormalizeToolSchemasContext,
   type ProviderReplayPolicyContext,
+  type ProviderNormalizeModelIdContext,
 } from "openclaw/plugin-sdk/plugin-entry";
 import { createProviderApiKeyAuthMethod } from "openclaw/plugin-sdk/provider-auth-api-key";
 import type {
@@ -53,16 +54,26 @@ function assertConfig(): void {
 // ---------------------------------------------------------------------------
 // Anthropic beta headers — attached per-model via catalog headers field
 //
-// Headers that are now GA (no-ops, removed):
-//   - output-128k-2025-02-19      → GA on all Claude 4+
-//   - effort-2025-11-24           → GA, use output_config.effort instead
-//   - token-efficient-tools-2025-02-19 → GA on all Claude 4+
+// Note: Snowflake Cortex keeps these as active beta headers even where
+// Anthropic has GA'd them. Use them as-is for Snowflake compatibility.
 // ---------------------------------------------------------------------------
 
-// interleaved-thinking: still required for Sonnet 4.5 with manual budget_tokens
-// + extended thinking tool use. Deprecated but functional on 4.6+ (adaptive
-// thinking handles this automatically there).
-const ANTHROPIC_BETA = "interleaved-thinking-2025-05-14";
+const ANTHROPIC_BETA_DEFAULT = [
+  "interleaved-thinking-2025-05-14",
+  "output-128k-2025-02-19",
+  "effort-2025-11-24",
+  "token-efficient-tools-2025-02-19",
+].join(",");
+
+// 1M context requires an explicit opt-in header on Snowflake Cortex.
+// Applied only to the *-1m model variants — never to the base models.
+const ANTHROPIC_BETA_1M = [
+  "context-1m-2025-08-07",
+  "interleaved-thinking-2025-05-14",
+  "output-128k-2025-02-19",
+  "effort-2025-11-24",
+  "token-efficient-tools-2025-02-19",
+].join(",");
 
 // ---------------------------------------------------------------------------
 // Model classification — pure functions
@@ -95,13 +106,17 @@ interface CortexModelSpec {
   contextWindow: number;
   maxTokens: number;
   input: Array<"text" | "image">;
+  extendedContext?: boolean; // true → attach context-1m beta header
 }
 
 const CLAUDE_MODELS: CortexModelSpec[] = [
-  { id: "claude-opus-4-5",   name: "Claude Opus 4.5",   reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-opus-4-6",   name: "Claude Opus 4.6",   reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-opus-4-5",       name: "Claude Opus 4.5",           reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-sonnet-4-5",     name: "Claude Sonnet 4.5",         reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-opus-4-6",       name: "Claude Opus 4.6",           reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-sonnet-4-6",     name: "Claude Sonnet 4.6",         reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
+  // 1M context variants — requires context-1m-2025-08-07 beta header (Snowflake Cortex)
+  { id: "claude-opus-4-6-1m",   name: "Claude Opus 4.6 (1M)",   reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"], extendedContext: true },
+  { id: "claude-sonnet-4-6-1m", name: "Claude Sonnet 4.6 (1M)", reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"], extendedContext: true },
 ];
 
 const OPENAI_MODELS: CortexModelSpec[] = [
@@ -124,8 +139,8 @@ const OPEN_SOURCE_MODELS: CortexModelSpec[] = [
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
-function anthropicBetaHeaders(): Record<string, string> {
-  return { "anthropic-beta": ANTHROPIC_BETA };
+function anthropicBetaHeaders(extendedContext = false): Record<string, string> {
+  return { "anthropic-beta": extendedContext ? ANTHROPIC_BETA_1M : ANTHROPIC_BETA_DEFAULT };
 }
 
 function buildClaudeModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
@@ -138,7 +153,7 @@ function buildClaudeModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
     cost: ZERO_COST,
     contextWindow: spec.contextWindow,
     maxTokens: spec.maxTokens,
-    headers: anthropicBetaHeaders(),
+    headers: anthropicBetaHeaders(spec.extendedContext),
     compat: { supportsTools: true },
   };
 }
@@ -235,13 +250,23 @@ export default definePluginEntry({
       },
 
       // -----------------------------------------------------------------------
-      // Hook 15: Strip tools for models that don't support them
+      // Hook: Strip tools for models that don't support them
       // -----------------------------------------------------------------------
       normalizeToolSchemas(ctx: ProviderNormalizeToolSchemasContext) {
         if (!ctx.modelId) return ctx.tools;
         if (isClaudeModel(ctx.modelId)) return ctx.tools;  // handled by Anthropic API
         if (!modelSupportsTools(ctx.modelId)) return [];
         return ctx.tools;
+      },
+
+      // -----------------------------------------------------------------------
+      // Hook: Strip -1m suffix before sending model ID to Snowflake.
+      // The -1m variants are virtual catalog entries — the real wire model ID
+      // is the base name (e.g. "claude-sonnet-4-6-1m" → "claude-sonnet-4-6").
+      // The context-1m beta header is already set per-model in the catalog.
+      // -----------------------------------------------------------------------
+      normalizeModelId(ctx: ProviderNormalizeModelIdContext) {
+        return ctx.modelId.replace(/-1m$/, "") || null;
       },
 
       // -----------------------------------------------------------------------
