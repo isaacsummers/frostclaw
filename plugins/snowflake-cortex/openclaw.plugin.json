@@ -1,0 +1,26 @@
+{
+  "id": "snowflake-cortex",
+  "name": "Snowflake Cortex",
+  "description": "Snowflake Cortex AI provider — routes Claude models to the Anthropic Messages API and all others to Chat Completions. PAT auth.",
+  "providers": ["snowflake-cortex"],
+  "providerAuthEnvVars": {
+    "snowflake-cortex": ["SNOWFLAKE_PAT", "SNOWFLAKE_CORTEX_API_KEY", "SNOWFLAKE_BASE_URL"]
+  },
+  "providerAuthChoices": [
+    {
+      "provider": "snowflake-cortex",
+      "method": "api-key",
+      "choiceId": "snowflake-cortex-pat",
+      "choiceLabel": "Snowflake PAT",
+      "groupId": "snowflake-cortex",
+      "groupLabel": "Snowflake Cortex",
+      "cliFlag": "--snowflake-pat",
+      "cliOption": "--snowflake-pat <token>",
+      "cliDescription": "Snowflake Programmatic Access Token"
+    }
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}
