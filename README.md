@@ -63,7 +63,7 @@ Tool calling is supported for Claude and OpenAI models. Open-source models have 
 Copy the plugin into your OpenClaw extensions directory:
 
 ```sh
-cp -r plugins/snowflake-cortex/ ~/.openclaw/plugins/snowflake-cortex/
+cp -r . ~/.openclaw/extensions/snowflake-cortex/
 ```
 
 Set the environment variables (in your shell profile, `.env`, or `openclaw.json`), then restart OpenClaw.
@@ -71,7 +71,6 @@ Set the environment variables (in your shell profile, `.env`, or `openclaw.json`
 ### Build from Source
 
 ```sh
-cd plugins/snowflake-cortex
 bun install
 bun run build
 ```
