@@ -9,12 +9,7 @@ function getApiKey() {
 function getBaseURL() {
   return process.env.SNOWFLAKE_BASE_URL ?? "";
 }
-var ANTHROPIC_BETA = [
-  "interleaved-thinking-2025-05-14",
-  "output-128k-2025-02-19",
-  "effort-2025-11-24",
-  "token-efficient-tools-2025-02-19"
-].join(",");
+var ANTHROPIC_BETA = "interleaved-thinking-2025-05-14";
 function isClaudeModel(modelId) {
   return modelId.toLowerCase().startsWith("claude");
 }
@@ -24,8 +19,8 @@ function modelSupportsTools(modelId) {
 var CLAUDE_MODELS = [
   { id: "claude-opus-4-5", name: "Claude Opus 4.5", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
-  { id: "claude-opus-4-6", name: "Claude Opus 4.6", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] }
+  { id: "claude-opus-4-6", name: "Claude Opus 4.6", reasoning: true, contextWindow: 1e6, maxTokens: 128000, input: ["text", "image"] },
+  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true, contextWindow: 1e6, maxTokens: 128000, input: ["text", "image"] }
 ];
 var OPENAI_MODELS = [
   { id: "openai-gpt-5", name: "GPT-5", reasoning: true, contextWindow: 128000, maxTokens: 32768, input: ["text", "image"] },
