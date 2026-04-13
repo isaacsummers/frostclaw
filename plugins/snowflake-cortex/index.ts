@@ -52,14 +52,17 @@ function assertConfig(): void {
 
 // ---------------------------------------------------------------------------
 // Anthropic beta headers — attached per-model via catalog headers field
+//
+// Headers that are now GA (no-ops, removed):
+//   - output-128k-2025-02-19      → GA on all Claude 4+
+//   - effort-2025-11-24           → GA, use output_config.effort instead
+//   - token-efficient-tools-2025-02-19 → GA on all Claude 4+
 // ---------------------------------------------------------------------------
 
-const ANTHROPIC_BETA = [
-  "interleaved-thinking-2025-05-14",
-  "output-128k-2025-02-19",
-  "effort-2025-11-24",
-  "token-efficient-tools-2025-02-19",
-].join(",");
+// interleaved-thinking: still required for Sonnet 4.5 with manual budget_tokens
+// + extended thinking tool use. Deprecated but functional on 4.6+ (adaptive
+// thinking handles this automatically there).
+const ANTHROPIC_BETA = "interleaved-thinking-2025-05-14";
 
 // ---------------------------------------------------------------------------
 // Model classification — pure functions
@@ -95,10 +98,10 @@ interface CortexModelSpec {
 }
 
 const CLAUDE_MODELS: CortexModelSpec[] = [
-  { id: "claude-opus-4-5", name: "Claude Opus 4.5", reasoning: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-opus-4-6", name: "Claude Opus 4.6", reasoning: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-opus-4-5",   name: "Claude Opus 4.5",   reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-opus-4-6",   name: "Claude Opus 4.6",   reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"] },
 ];
 
 const OPENAI_MODELS: CortexModelSpec[] = [
