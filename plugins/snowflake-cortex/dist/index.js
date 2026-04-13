@@ -13,14 +13,16 @@ var ANTHROPIC_BETA_DEFAULT = [
   "interleaved-thinking-2025-05-14",
   "output-128k-2025-02-19",
   "effort-2025-11-24",
-  "token-efficient-tools-2025-02-19"
+  "token-efficient-tools-2025-02-19",
+  "tool-examples-2025-10-29"
 ].join(",");
 var ANTHROPIC_BETA_1M = [
   "context-1m-2025-08-07",
   "interleaved-thinking-2025-05-14",
   "output-128k-2025-02-19",
   "effort-2025-11-24",
-  "token-efficient-tools-2025-02-19"
+  "token-efficient-tools-2025-02-19",
+  "tool-examples-2025-10-29"
 ].join(",");
 function isClaudeModel(modelId) {
   return modelId.toLowerCase().startsWith("claude");

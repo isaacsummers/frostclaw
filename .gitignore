@@ -1,2 +1,8 @@
 node_modules/
 .logs/
+
+# Sensitive config — never commit
+openclaw.json
+*.env
+.env.*
+credentials.*
