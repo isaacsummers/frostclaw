@@ -63,6 +63,7 @@ const ANTHROPIC_BETA_DEFAULT = [
   "output-128k-2025-02-19",
   "effort-2025-11-24",
   "token-efficient-tools-2025-02-19",
+  "tool-examples-2025-10-29",
 ].join(",");
 
 // 1M context requires an explicit opt-in header on Snowflake Cortex.
@@ -73,6 +74,7 @@ const ANTHROPIC_BETA_1M = [
   "output-128k-2025-02-19",
   "effort-2025-11-24",
   "token-efficient-tools-2025-02-19",
+  "tool-examples-2025-10-29",
 ].join(",");
 
 // ---------------------------------------------------------------------------
