@@ -84,7 +84,8 @@ function buildOpenAIModelDef(spec) {
     maxTokens: spec.maxTokens,
     compat: {
       supportsTools: true,
-      maxTokensField: "max_completion_tokens"
+      maxTokensField: "max_completion_tokens",
+      supportsUsageInStreaming: true
     }
   };
 }
@@ -100,7 +101,8 @@ function buildOpenSourceModelDef(spec) {
     maxTokens: spec.maxTokens,
     compat: {
       supportsTools: false,
-      maxTokensField: "max_completion_tokens"
+      maxTokensField: "max_completion_tokens",
+      supportsUsageInStreaming: true
     }
   };
 }
@@ -111,7 +113,7 @@ function buildModelCatalog() {
     ...OPEN_SOURCE_MODELS.map(buildOpenSourceModelDef)
   ];
 }
-var openclaw_default = definePluginEntry({
+var frostclaw_default = definePluginEntry({
   id: "snowflake-cortex",
   name: "Snowflake Cortex",
   description: "Snowflake Cortex AI — routes Claude models to Anthropic Messages API " + "and all other models to OpenAI-compatible Chat Completions, both " + "behind PAT authentication.",
@@ -190,5 +192,5 @@ var openclaw_default = definePluginEntry({
   }
 });
 export {
-  openclaw_default as default
+  frostclaw_default as default
 };

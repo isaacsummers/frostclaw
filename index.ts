@@ -173,6 +173,7 @@ function buildOpenAIModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
     compat: {
       supportsTools: true,
       maxTokensField: "max_completion_tokens",
+      supportsUsageInStreaming: true,
     },
   };
 }
@@ -190,6 +191,7 @@ function buildOpenSourceModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
     compat: {
       supportsTools: false,
       maxTokensField: "max_completion_tokens",
+      supportsUsageInStreaming: true,
     },
   };
 }
