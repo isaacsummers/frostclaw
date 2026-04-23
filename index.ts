@@ -19,6 +19,10 @@ import {
   type ProviderReplayPolicyContext,
   type ProviderNormalizeModelIdContext,
 } from "openclaw/plugin-sdk/plugin-entry";
+import type {
+  MemoryEmbeddingProviderAdapter,
+  MemoryEmbeddingProviderCreateOptions,
+} from "openclaw/plugin-sdk/memory-core-host-engine-embeddings";
 import { createProviderApiKeyAuthMethod } from "openclaw/plugin-sdk/provider-auth-api-key";
 import type {
   ModelDefinitionConfig,
@@ -208,6 +212,87 @@ function buildModelCatalog(): ModelDefinitionConfig[] {
 // Plugin entry
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Snowflake Cortex Embedding Provider
+//
+// Snowflake's embed API is NOT OpenAI-compatible:
+//   - Request uses `text` (array) instead of `input`
+//   - Response wraps vectors in an extra array: [[...]] instead of [...]
+// So we use a custom adapter rather than the OpenAI embedding provider.
+// ---------------------------------------------------------------------------
+
+// Default model — cheapest, widely available, 768 dims
+const DEFAULT_SNOWFLAKE_EMBED_MODEL = "snowflake-arctic-embed-m-v1.5";
+
+async function snowflakeEmbed(
+  texts: string[],
+  model: string,
+): Promise<number[][]> {
+  const apiKey = getApiKey();
+  const baseUrl = getBaseURL();
+  if (!apiKey || !baseUrl) {
+    throw new Error(
+      "[snowflake-cortex] Missing SNOWFLAKE_BASE_URL or SNOWFLAKE_CORTEX_API_KEY",
+    );
+  }
+
+  const url = `${baseUrl}/api/v2/cortex/inference:embed`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN",
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ text: texts, model }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(
+      `[snowflake-cortex] Embed request failed (${res.status}): ${body}`,
+    );
+  }
+
+  const json = await res.json() as {
+    data: Array<{ embedding: number[][] | number[]; index: number }>;
+  };
+
+  // Snowflake wraps each vector in an extra array: [[vec]] — flatten if needed
+  return json.data
+    .sort((a, b) => a.index - b.index)
+    .map(({ embedding }) =>
+      Array.isArray(embedding[0]) ? (embedding as number[][])[0] : (embedding as number[]),
+    );
+}
+
+const snowflakeCortexEmbeddingAdapter: MemoryEmbeddingProviderAdapter = {
+  id: "snowflake-cortex",
+  defaultModel: DEFAULT_SNOWFLAKE_EMBED_MODEL,
+  transport: "remote",
+  // Low priority — only selected when explicitly configured
+  autoSelectPriority: -1,
+
+  async create(options: MemoryEmbeddingProviderCreateOptions) {
+    const model = options.model || DEFAULT_SNOWFLAKE_EMBED_MODEL;
+
+    if (!getApiKey() || !getBaseURL()) {
+      return { provider: null };
+    }
+
+    return {
+      provider: {
+        id: "snowflake-cortex",
+        model,
+        maxInputTokens: 4096,
+        embedQuery: (text: string) => snowflakeEmbed([text], model).then((v) => v[0]),
+        embedBatch: (texts: string[]) => snowflakeEmbed(texts, model),
+      },
+    };
+  },
+};
+
 export default definePluginEntry({
   id: "snowflake-cortex",
   name: "Snowflake Cortex",
@@ -217,6 +302,7 @@ export default definePluginEntry({
     "behind PAT authentication.",
 
   register(api) {
+    api.registerMemoryEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
     api.registerProvider({
       id: "snowflake-cortex",
       label: "Snowflake Cortex",
