@@ -113,11 +113,58 @@ function buildModelCatalog() {
     ...OPEN_SOURCE_MODELS.map(buildOpenSourceModelDef)
   ];
 }
+var DEFAULT_SNOWFLAKE_EMBED_MODEL = "snowflake-arctic-embed-m-v1.5";
+async function snowflakeEmbed(texts, model) {
+  const apiKey = getApiKey();
+  const baseUrl = getBaseURL();
+  if (!apiKey || !baseUrl) {
+    throw new Error("[snowflake-cortex] Missing SNOWFLAKE_BASE_URL or SNOWFLAKE_CORTEX_API_KEY");
+  }
+  const url = `${baseUrl}/api/v2/cortex/inference:embed`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN",
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    },
+    body: JSON.stringify({ text: texts, model })
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`[snowflake-cortex] Embed request failed (${res.status}): ${body}`);
+  }
+  const json = await res.json();
+  return json.data.sort((a, b) => a.index - b.index).map(({ embedding }) => Array.isArray(embedding[0]) ? embedding[0] : embedding);
+}
+var snowflakeCortexEmbeddingAdapter = {
+  id: "snowflake-cortex",
+  defaultModel: DEFAULT_SNOWFLAKE_EMBED_MODEL,
+  transport: "remote",
+  autoSelectPriority: -1,
+  async create(options) {
+    const model = options.model || DEFAULT_SNOWFLAKE_EMBED_MODEL;
+    if (!getApiKey() || !getBaseURL()) {
+      return { provider: null };
+    }
+    return {
+      provider: {
+        id: "snowflake-cortex",
+        model,
+        maxInputTokens: 4096,
+        embedQuery: (text) => snowflakeEmbed([text], model).then((v) => v[0]),
+        embedBatch: (texts) => snowflakeEmbed(texts, model)
+      }
+    };
+  }
+};
 var frostclaw_default = definePluginEntry({
   id: "snowflake-cortex",
   name: "Snowflake Cortex",
   description: "Snowflake Cortex AI — routes Claude models to Anthropic Messages API " + "and all other models to OpenAI-compatible Chat Completions, both " + "behind PAT authentication.",
   register(api) {
+    api.registerMemoryEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
     api.registerProvider({
       id: "snowflake-cortex",
       label: "Snowflake Cortex",
