@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# OpenClaw post-update hook
+# Called by mise postinstall after npm:openclaw upgrades.
+# Handles: openclaw update, frostclaw rebuild, embed proxy restart.
+
+FROSTCLAW_DIR="${FROSTCLAW_DIR:-$HOME/projects/frostclaw}"
+
+echo "==> Running openclaw update..."
+openclaw update --yes
+
+if [ -d "$FROSTCLAW_DIR" ]; then
+  echo "==> Rebuilding frostclaw plugin..."
+  cd "$FROSTCLAW_DIR"
+
+  # Update openclaw peer dependency to match new version
+  bun install 2>/dev/null || true
+  bun run build
+
+  echo "==> Restarting embed proxy..."
+  systemctl --user restart snowflake-embed-proxy 2>/dev/null || true
+
+  echo "==> Frostclaw rebuilt successfully"
+else
+  echo "==> Frostclaw not found at $FROSTCLAW_DIR, skipping plugin rebuild"
+fi
