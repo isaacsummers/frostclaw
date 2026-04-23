@@ -19,6 +19,9 @@
       "cliDescription": "Snowflake Programmatic Access Token"
     }
   ],
+  "contracts": {
+    "memoryEmbeddingProviders": ["snowflake-cortex"]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false
