@@ -128,10 +128,14 @@ const CLAUDE_MODELS: CortexModelSpec[] = [
 ];
 
 const OPENAI_MODELS: CortexModelSpec[] = [
-  { id: "openai-gpt-5", name: "GPT-5", reasoning: true, contextWindow: 128_000, maxTokens: 32_768, input: ["text", "image"] },
-  { id: "openai-gpt-5-mini", name: "GPT-5 Mini", reasoning: true, contextWindow: 128_000, maxTokens: 32_768, input: ["text", "image"] },
-  { id: "openai-gpt-5-nano", name: "GPT-5 Nano", reasoning: false, contextWindow: 128_000, maxTokens: 16_384, input: ["text", "image"] },
-  { id: "openai-gpt-4-1", name: "GPT-4.1", reasoning: false, contextWindow: 1_047_576, maxTokens: 32_768, input: ["text", "image"] },
+  { id: "openai-gpt-5.4",      name: "GPT-5.4",       reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] }, // preview
+  { id: "openai-gpt-5.2",      name: "GPT-5.2",       reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
+  { id: "openai-gpt-5.1",      name: "GPT-5.1",       reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
+  { id: "openai-gpt-5",        name: "GPT-5",         reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] }, // preview
+  { id: "openai-gpt-5-mini",   name: "GPT-5 Mini",    reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] }, // preview
+  { id: "openai-gpt-5-nano",   name: "GPT-5 Nano",    reasoning: false, contextWindow: 128_000,   maxTokens: 16_384, input: ["text", "image"] }, // preview
+  { id: "openai-gpt-oss-120b", name: "GPT OSS 120B",  reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text"] },           // preview
+  { id: "openai-gpt-4.1",      name: "GPT-4.1",       reasoning: false, contextWindow: 1_047_576, maxTokens: 32_768, input: ["text", "image"] },
 ];
 
 const OPEN_SOURCE_MODELS: CortexModelSpec[] = [
@@ -142,7 +146,8 @@ const OPEN_SOURCE_MODELS: CortexModelSpec[] = [
   { id: "mistral-large", name: "Mistral Large", reasoning: false, contextWindow: 32_000, maxTokens: 8_192, input: ["text"] },
   { id: "mistral-large2", name: "Mistral Large 2", reasoning: false, contextWindow: 128_000, maxTokens: 8_192, input: ["text"] },
   { id: "deepseek-r1", name: "DeepSeek R1", reasoning: true, contextWindow: 64_000, maxTokens: 8_192, input: ["text"] },
-  { id: "snowflake-arctic", name: "Snowflake Arctic", reasoning: false, contextWindow: 4_096, maxTokens: 4_096, input: ["text"] },
+  { id: "snowflake-arctic",        name: "Snowflake Arctic",         reasoning: false, contextWindow:   4_096, maxTokens: 4_096, input: ["text"] },
+  { id: "snowflake-llama-3.3-70b", name: "Snowflake Llama 3.3 70B", reasoning: false, contextWindow: 128_000, maxTokens: 4_096, input: ["text"] },
 ];
 
 // ---------------------------------------------------------------------------
@@ -166,8 +171,10 @@ const COST_SONNET = { input: 0.000003,    output: 0.000015,    cacheRead: 0.0000
 const COST_HAIKU  = { input: 0.000001,    output: 0.000005,    cacheRead: 0.0000001,  cacheWrite: 0 }; // $1/$5/$0.10 per 1M
 
 // Table 6(b) — OpenAI models (no separate cache-read pricing listed; using 10% heuristic)
-const COST_GPT5   = { input: 0.0000025,   output: 0.00001,     cacheRead: 0.00000025, cacheWrite: 0 }; // $2.50/$10 per 1M (gpt-5.4 rate)
-const COST_GPT41  = { input: 0.000002,    output: 0.000008,    cacheRead: 0.0000002,  cacheWrite: 0 }; // $2/$8 per 1M
+const COST_GPT54  = { input: 0.0000025,   output: 0.000015,    cacheRead: 0.00000025,  cacheWrite: 0 }; // $2.50/$15/$0.25 per 1M (gpt-5.4)
+const COST_GPT52  = { input: 0.00000175,  output: 0.000014,    cacheRead: 0.000000175, cacheWrite: 0 }; // $1.75/$14/$0.18 per 1M (gpt-5.2)
+const COST_GPT5   = { input: 0.00000125,  output: 0.00001,     cacheRead: 0.000000125, cacheWrite: 0 }; // $1.25/$10/$0.13 per 1M (gpt-5, gpt-5.1)
+const COST_GPT41  = { input: 0.000002,    output: 0.000008,    cacheRead: 0.0000002,   cacheWrite: 0 }; // $2/$8/$0.20 per 1M (gpt-4.1)
 
 // Table 6(c) — Open-source models (no prompt caching)
 const COST_LLAMA_405B = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 }; // approx, not in 6(c); using 70b rate
@@ -208,9 +215,10 @@ function buildClaudeModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
 
 /** Map an OpenAI model ID to its cost tier */
 function openaiCost(id: string): typeof COST_GPT5 {
-  if (id.startsWith("openai-gpt-5")) return COST_GPT5;
+  if (id === "openai-gpt-5.4") return COST_GPT54;
+  if (id === "openai-gpt-5.2") return COST_GPT52;
   if (id.startsWith("openai-gpt-4")) return COST_GPT41;
-  return COST_GPT5; // fallback
+  return COST_GPT5; // gpt-5, gpt-5.1, gpt-5-mini, gpt-5-nano, gpt-oss-120b
 }
 
 function buildOpenAIModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
@@ -241,6 +249,7 @@ function openSourceCost(id: string): typeof COST_LLAMA_70B {
   if (id === "mistral-large2") return COST_MISTRAL_L2;
   if (id === "deepseek-r1") return COST_DEEPSEEK;
   if (id === "snowflake-arctic") return COST_ARCTIC;
+  if (id === "snowflake-llama-3.3-70b") return COST_LLAMA_70B;
   return COST_LLAMA_70B; // fallback
 }
 
