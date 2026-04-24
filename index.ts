@@ -146,26 +146,38 @@ const OPEN_SOURCE_MODELS: CortexModelSpec[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Cost per token (USD) — derived from Snowflake Credit Consumption Table
-// (effective 2026-04-20). Uses Enterprise edition @ $3.00/credit.
+// Cost per token (USD) — sourced from Snowflake Service Consumption Table
+// (effective 2026-04-20), Tables 6(b) and 6(c): Cortex REST API pricing.
+// All values are USD per token (divide per-1M rate by 1,000,000).
 //
-// Table 6(a): Cortex AI Functions — Credits per 1M tokens
-// Conversion: (credits / 1M) × $3.00 / 1,000,000 = $/token
+// Table 6(b) — REST API with Prompt Caching (Claude + OpenAI models)
+// Table 6(c) — REST API without Prompt Caching (Llama, Mistral, DeepSeek)
+//
+// Cache read is billed at 10% of the input rate (90% discount).
+// Cache write (cacheWrite) is not separately billed on Snowflake Cortex.
+//
+// Note: claude-opus-4-7 is preview and not yet listed in the table;
+// using the same rates as claude-opus-4-6 until official pricing is published.
 // ---------------------------------------------------------------------------
 
-const COST_OPUS = { input: 0.00000825, output: 0.00004125, cacheRead: 0, cacheWrite: 0 };       // 2.75 / 13.75 credits per 1M
-const COST_SONNET = { input: 0.00000495, output: 0.00002475, cacheRead: 0, cacheWrite: 0 };     // 1.65 / 8.25 credits per 1M
-const COST_HAIKU = { input: 0.00000165, output: 0.00000825, cacheRead: 0, cacheWrite: 0 };      // 0.55 / 2.75 credits per 1M
-const COST_GPT5 = { input: 0.00000414, output: 0.00002475, cacheRead: 0, cacheWrite: 0 };       // 1.38 / 8.25 credits per 1M
-const COST_GPT41 = { input: 0.000003, output: 0.000012, cacheRead: 0, cacheWrite: 0 };          // 1.00 / 4.00 credits per 1M
-const COST_LLAMA_405B = { input: 0.0000036, output: 0.0000036, cacheRead: 0, cacheWrite: 0 };   // 1.20 / 1.20 credits per 1M
-const COST_LLAMA_70B = { input: 0.00000108, output: 0.00000108, cacheRead: 0, cacheWrite: 0 };  // 0.36 / 0.36 credits per 1M
-const COST_LLAMA_8B = { input: 0.00000033, output: 0.00000033, cacheRead: 0, cacheWrite: 0 };   // 0.11 / 0.11 credits per 1M
-const COST_LLAMA4_MAV = { input: 0.00000036, output: 0.00000147, cacheRead: 0, cacheWrite: 0 }; // 0.12 / 0.49 credits per 1M
-const COST_MISTRAL_L = { input: 0.0000153, output: 0.0000153, cacheRead: 0, cacheWrite: 0 };    // 5.10 credits per 1M (legacy)
-const COST_MISTRAL_L2 = { input: 0.000003, output: 0.000009, cacheRead: 0, cacheWrite: 0 };     // 1.00 / 3.00 credits per 1M
-const COST_DEEPSEEK = { input: 0.00000204, output: 0.0000081, cacheRead: 0, cacheWrite: 0 };    // 0.68 / 2.70 credits per 1M
-const COST_ARCTIC = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };                       // Snowflake native — free tier
+// Table 6(b) — Claude models
+const COST_OPUS   = { input: 0.000005,    output: 0.000025,    cacheRead: 0.0000005,  cacheWrite: 0 }; // $5/$25/$0.50 per 1M
+const COST_SONNET = { input: 0.000003,    output: 0.000015,    cacheRead: 0.0000003,  cacheWrite: 0 }; // $3/$15/$0.30 per 1M
+const COST_HAIKU  = { input: 0.000001,    output: 0.000005,    cacheRead: 0.0000001,  cacheWrite: 0 }; // $1/$5/$0.10 per 1M
+
+// Table 6(b) — OpenAI models (no separate cache-read pricing listed; using 10% heuristic)
+const COST_GPT5   = { input: 0.0000025,   output: 0.00001,     cacheRead: 0.00000025, cacheWrite: 0 }; // $2.50/$10 per 1M (gpt-5.4 rate)
+const COST_GPT41  = { input: 0.000002,    output: 0.000008,    cacheRead: 0.0000002,  cacheWrite: 0 }; // $2/$8 per 1M
+
+// Table 6(c) — Open-source models (no prompt caching)
+const COST_LLAMA_405B = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 }; // approx, not in 6(c); using 70b rate
+const COST_LLAMA_70B  = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 }; // $0.72/$0.72 per 1M
+const COST_LLAMA_8B   = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 }; // not in 6(c); using 70b rate as fallback
+const COST_LLAMA4_MAV = { input: 0.00000024, output: 0.00000097, cacheRead: 0, cacheWrite: 0 }; // $0.24/$0.97 per 1M
+const COST_MISTRAL_L  = { input: 0.000002,   output: 0.000006,   cacheRead: 0, cacheWrite: 0 }; // legacy; using L2 rate
+const COST_MISTRAL_L2 = { input: 0.000002,   output: 0.000006,   cacheRead: 0, cacheWrite: 0 }; // $2/$6 per 1M
+const COST_DEEPSEEK   = { input: 0.00000135, output: 0.0000054,  cacheRead: 0, cacheWrite: 0 }; // $1.35/$5.40 per 1M
+const COST_ARCTIC     = { input: 0,          output: 0,           cacheRead: 0, cacheWrite: 0 }; // Snowflake native — free tier
 
 function anthropicBetaHeaders(extendedContext = false): Record<string, string> {
   return { "anthropic-beta": extendedContext ? ANTHROPIC_BETA_1M : ANTHROPIC_BETA_DEFAULT };
