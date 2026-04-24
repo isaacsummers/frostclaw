@@ -116,11 +116,13 @@ interface CortexModelSpec {
 }
 
 const CLAUDE_MODELS: CortexModelSpec[] = [
-  { id: "claude-opus-4-5",       name: "Claude Opus 4.5",           reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-5",     name: "Claude Sonnet 4.5",         reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-opus-4-7",       name: "Claude Opus 4.7",           reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-opus-4-6",       name: "Claude Opus 4.6",           reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-opus-4-5",       name: "Claude Opus 4.5",           reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-sonnet-4-6",     name: "Claude Sonnet 4.6",         reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-sonnet-4-5",     name: "Claude Sonnet 4.5",         reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
   // 1M context variants — requires context-1m-2025-08-07 beta header (Snowflake Cortex)
+  { id: "claude-opus-4-7-1m",   name: "Claude Opus 4.7 (1M)",   reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"], extendedContext: true },
   { id: "claude-opus-4-6-1m",   name: "Claude Opus 4.6 (1M)",   reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"], extendedContext: true },
   { id: "claude-sonnet-4-6-1m", name: "Claude Sonnet 4.6 (1M)", reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"], extendedContext: true },
 ];
@@ -143,10 +145,38 @@ const OPEN_SOURCE_MODELS: CortexModelSpec[] = [
   { id: "snowflake-arctic", name: "Snowflake Arctic", reasoning: false, contextWindow: 4_096, maxTokens: 4_096, input: ["text"] },
 ];
 
-const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+// ---------------------------------------------------------------------------
+// Cost per token (USD) — derived from Snowflake Credit Consumption Table
+// (effective 2026-04-20). Uses Enterprise edition @ $3.00/credit.
+//
+// Table 6(a): Cortex AI Functions — Credits per 1M tokens
+// Conversion: (credits / 1M) × $3.00 / 1,000,000 = $/token
+// ---------------------------------------------------------------------------
+
+const COST_OPUS = { input: 0.00000825, output: 0.00004125, cacheRead: 0, cacheWrite: 0 };       // 2.75 / 13.75 credits per 1M
+const COST_SONNET = { input: 0.00000495, output: 0.00002475, cacheRead: 0, cacheWrite: 0 };     // 1.65 / 8.25 credits per 1M
+const COST_HAIKU = { input: 0.00000165, output: 0.00000825, cacheRead: 0, cacheWrite: 0 };      // 0.55 / 2.75 credits per 1M
+const COST_GPT5 = { input: 0.00000414, output: 0.00002475, cacheRead: 0, cacheWrite: 0 };       // 1.38 / 8.25 credits per 1M
+const COST_GPT41 = { input: 0.000003, output: 0.000012, cacheRead: 0, cacheWrite: 0 };          // 1.00 / 4.00 credits per 1M
+const COST_LLAMA_405B = { input: 0.0000036, output: 0.0000036, cacheRead: 0, cacheWrite: 0 };   // 1.20 / 1.20 credits per 1M
+const COST_LLAMA_70B = { input: 0.00000108, output: 0.00000108, cacheRead: 0, cacheWrite: 0 };  // 0.36 / 0.36 credits per 1M
+const COST_LLAMA_8B = { input: 0.00000033, output: 0.00000033, cacheRead: 0, cacheWrite: 0 };   // 0.11 / 0.11 credits per 1M
+const COST_LLAMA4_MAV = { input: 0.00000036, output: 0.00000147, cacheRead: 0, cacheWrite: 0 }; // 0.12 / 0.49 credits per 1M
+const COST_MISTRAL_L = { input: 0.0000153, output: 0.0000153, cacheRead: 0, cacheWrite: 0 };    // 5.10 credits per 1M (legacy)
+const COST_MISTRAL_L2 = { input: 0.000003, output: 0.000009, cacheRead: 0, cacheWrite: 0 };     // 1.00 / 3.00 credits per 1M
+const COST_DEEPSEEK = { input: 0.00000204, output: 0.0000081, cacheRead: 0, cacheWrite: 0 };    // 0.68 / 2.70 credits per 1M
+const COST_ARCTIC = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };                       // Snowflake native — free tier
 
 function anthropicBetaHeaders(extendedContext = false): Record<string, string> {
   return { "anthropic-beta": extendedContext ? ANTHROPIC_BETA_1M : ANTHROPIC_BETA_DEFAULT };
+}
+
+/** Map a Claude model ID to its cost tier */
+function claudeCost(id: string): typeof COST_OPUS {
+  if (id.startsWith("claude-opus")) return COST_OPUS;
+  if (id.startsWith("claude-sonnet")) return COST_SONNET;
+  if (id.startsWith("claude-haiku")) return COST_HAIKU;
+  return COST_OPUS; // fallback to most expensive
 }
 
 function buildClaudeModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
@@ -156,12 +186,19 @@ function buildClaudeModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
     api: "anthropic-messages" as ModelApi,
     reasoning: spec.reasoning,
     input: spec.input,
-    cost: ZERO_COST,
+    cost: claudeCost(spec.id),
     contextWindow: spec.contextWindow,
     maxTokens: spec.maxTokens,
     headers: anthropicBetaHeaders(spec.extendedContext),
     compat: { supportsTools: true },
   };
+}
+
+/** Map an OpenAI model ID to its cost tier */
+function openaiCost(id: string): typeof COST_GPT5 {
+  if (id.startsWith("openai-gpt-5")) return COST_GPT5;
+  if (id.startsWith("openai-gpt-4")) return COST_GPT41;
+  return COST_GPT5; // fallback
 }
 
 function buildOpenAIModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
@@ -171,7 +208,7 @@ function buildOpenAIModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
     api: "openai-completions" as ModelApi,
     reasoning: spec.reasoning,
     input: spec.input,
-    cost: ZERO_COST,
+    cost: openaiCost(spec.id),
     contextWindow: spec.contextWindow,
     maxTokens: spec.maxTokens,
     compat: {
@@ -182,6 +219,19 @@ function buildOpenAIModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
   };
 }
 
+/** Map an open-source model ID to its cost tier */
+function openSourceCost(id: string): typeof COST_LLAMA_70B {
+  if (id === "llama4-maverick") return COST_LLAMA4_MAV;
+  if (id === "llama3.1-405b") return COST_LLAMA_405B;
+  if (id === "llama3.1-70b" || id === "llama3.3-70b") return COST_LLAMA_70B;
+  if (id === "llama3.1-8b") return COST_LLAMA_8B;
+  if (id === "mistral-large") return COST_MISTRAL_L;
+  if (id === "mistral-large2") return COST_MISTRAL_L2;
+  if (id === "deepseek-r1") return COST_DEEPSEEK;
+  if (id === "snowflake-arctic") return COST_ARCTIC;
+  return COST_LLAMA_70B; // fallback
+}
+
 function buildOpenSourceModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
   return {
     id: spec.id,
@@ -189,7 +239,7 @@ function buildOpenSourceModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
     api: "openai-completions" as ModelApi,
     reasoning: spec.reasoning,
     input: spec.input,
-    cost: ZERO_COST,
+    cost: openSourceCost(spec.id),
     contextWindow: spec.contextWindow,
     maxTokens: spec.maxTokens,
     compat: {
