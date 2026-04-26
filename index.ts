@@ -68,6 +68,7 @@ const ANTHROPIC_BETA_DEFAULT = [
   "effort-2025-11-24",
   "token-efficient-tools-2025-02-19",
   "tool-examples-2025-10-29",
+  "extended-cache-ttl-2025-02-19",
 ].join(",");
 
 // 1M context requires an explicit opt-in header on Snowflake Cortex.
@@ -79,6 +80,7 @@ const ANTHROPIC_BETA_1M = [
   "effort-2025-11-24",
   "token-efficient-tools-2025-02-19",
   "tool-examples-2025-10-29",
+  "extended-cache-ttl-2025-02-19",
 ].join(",");
 
 // ---------------------------------------------------------------------------
@@ -99,6 +101,57 @@ function isClaudeModel(modelId: string): boolean {
  */
 function modelSupportsTools(modelId: string): boolean {
   return modelId.toLowerCase().startsWith("openai-");
+}
+
+/**
+ * Walk an Anthropic-shaped request payload and promote every ephemeral
+ * cache_control breakpoint to `{ type: "ephemeral", ttl: "1h" }`.
+ *
+ * pi-ai's Anthropic provider only emits `ttl: "1h"` when `baseUrl.includes
+ * ("api.anthropic.com")`. Snowflake Cortex uses its own hostname, so without
+ * this patch every breakpoint is a 5-minute TTL. Snowflake Cortex supports
+ * the extended cache TTL beta (sent via `anthropic-beta`), and cache writes
+ * are free on Cortex while reads are billed at 10% of input — so promoting
+ * is strictly cheaper.
+ */
+function promoteEphemeralCacheToLongTtl(payload: Record<string, unknown>): void {
+  const promote = (block: unknown): void => {
+    if (!block || typeof block !== "object") return;
+    const record = block as Record<string, unknown>;
+    const cc = record.cache_control;
+    if (
+      cc &&
+      typeof cc === "object" &&
+      (cc as Record<string, unknown>).type === "ephemeral" &&
+      (cc as Record<string, unknown>).ttl === undefined
+    ) {
+      (cc as Record<string, unknown>).ttl = "1h";
+    }
+  };
+
+  // system: may be string | Array<{ type, text, cache_control? }>
+  const system = payload.system;
+  if (Array.isArray(system)) {
+    for (const block of system) promote(block);
+  }
+
+  // messages: Array<{ role, content: string | Array<block> }>
+  const messages = payload.messages;
+  if (Array.isArray(messages)) {
+    for (const msg of messages) {
+      if (!msg || typeof msg !== "object") continue;
+      const content = (msg as Record<string, unknown>).content;
+      if (Array.isArray(content)) {
+        for (const block of content) promote(block);
+      }
+    }
+  }
+
+  // tools: Array<{ ..., cache_control? }>
+  const tools = payload.tools;
+  if (Array.isArray(tools)) {
+    for (const tool of tools) promote(tool);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -166,9 +219,9 @@ const OPEN_SOURCE_MODELS: CortexModelSpec[] = [
 // ---------------------------------------------------------------------------
 
 // Table 6(b) — Claude models
-const COST_OPUS   = { input: 0.000005,    output: 0.000025,    cacheRead: 0.0000005,  cacheWrite: 0 }; // $5/$25/$0.50 per 1M
-const COST_SONNET = { input: 0.000003,    output: 0.000015,    cacheRead: 0.0000003,  cacheWrite: 0 }; // $3/$15/$0.30 per 1M
-const COST_HAIKU  = { input: 0.000001,    output: 0.000005,    cacheRead: 0.0000001,  cacheWrite: 0 }; // $1/$5/$0.10 per 1M
+const COST_OPUS   = { input: 0.0000055,   output: 0.0000275,   cacheRead: 0.00000055, cacheWrite: 0 }; // $5.50/$27.50/$0.55 per 1M (AWS Regional)
+const COST_SONNET = { input: 0.0000033,   output: 0.0000165,   cacheRead: 0.00000033, cacheWrite: 0 }; // $3.30/$16.50/$0.33 per 1M (AWS Regional)
+const COST_HAIKU  = { input: 0.0000011,   output: 0.0000055,   cacheRead: 0.00000011, cacheWrite: 0 }; // $1.10/$5.50/$0.11 per 1M (AWS Regional)
 
 // Table 6(b) — OpenAI models (no separate cache-read pricing listed; using 10% heuristic)
 const COST_GPT54  = { input: 0.0000025,   output: 0.000015,    cacheRead: 0.00000025,  cacheWrite: 0 }; // $2.50/$15/$0.25 per 1M (gpt-5.4)
@@ -431,13 +484,23 @@ export default definePluginEntry({
       },
 
       // -----------------------------------------------------------------------
-      // Hook 20: Inject Snowflake PAT header type — no body patching
+      // Hook 20: Inject Snowflake PAT header type + promote ephemeral cache
+      // breakpoints to 1h TTL for Claude models.
+      //
+      // pi-ai's Anthropic provider only attaches `ttl: "1h"` when the baseUrl
+      // includes "api.anthropic.com". Snowflake Cortex's endpoint does not,
+      // so cache breakpoints default to the 5-minute TTL. Snowflake Cortex
+      // accepts the extended cache TTL beta header (added above to
+      // ANTHROPIC_BETA_DEFAULT / ANTHROPIC_BETA_1M), and cache writes are
+      // free on Cortex — cache reads are 10% of input price — so promoting
+      // every breakpoint to 1h is strictly cheaper.
       // -----------------------------------------------------------------------
       wrapStreamFn(ctx: ProviderWrapStreamFnContext) {
         if (!ctx.streamFn) return undefined;
 
         const inner = ctx.streamFn;
         return (model, context, options) => {
+          const originalOnPayload = options?.onPayload;
           const merged = {
             ...options,
             headers: {
@@ -445,8 +508,20 @@ export default definePluginEntry({
               "X-Snowflake-Authorization-Token-Type":
                 "PROGRAMMATIC_ACCESS_TOKEN",
             },
+            onPayload: (payload: unknown, payloadModel: unknown) => {
+              if (
+                payload &&
+                typeof payload === "object" &&
+                isClaudeModel(String((model as { id?: unknown })?.id ?? ""))
+              ) {
+                promoteEphemeralCacheToLongTtl(payload as Record<string, unknown>);
+              }
+              return (originalOnPayload as
+                | ((p: unknown, m: unknown) => unknown)
+                | undefined)?.(payload, payloadModel);
+            },
           };
-          return inner(model, context, merged);
+          return inner(model, context, merged as typeof options);
         };
       },
 
