@@ -56,32 +56,49 @@ function assertConfig(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Anthropic beta headers — attached per-model via catalog headers field
+// Anthropic beta headers — split into always-safe and conditional sets.
+//
+// Snowflake Cortex rejects beta flags it hasn't activated with a 400 error
+// ("invalid beta flag"). We only send flags that are actually needed:
+//
+//   BETA_ALWAYS  — broadly needed for all Claude calls (catalog headers)
+//   BETA_THINKING — only when the request uses extended thinking
+//   BETA_1M_FLAG — only for 1M context model variants
 //
 // Note: Snowflake Cortex keeps these as active beta headers even where
 // Anthropic has GA'd them. Use them as-is for Snowflake compatibility.
 // ---------------------------------------------------------------------------
 
-const ANTHROPIC_BETA_DEFAULT = [
-  "interleaved-thinking-2025-05-14",
+/** Flags safe to send on every Claude request */
+const BETA_ALWAYS = [
   "output-128k-2025-02-19",
-  "effort-2025-11-24",
   "token-efficient-tools-2025-02-19",
-  "tool-examples-2025-10-29",
-  "extended-cache-ttl-2025-02-19",
-].join(",");
+];
 
-// 1M context requires an explicit opt-in header on Snowflake Cortex.
-// Applied only to the *-1m model variants — never to the base models.
-const ANTHROPIC_BETA_1M = [
-  "context-1m-2025-08-07",
+/** Flags that should only be sent when thinking is active */
+const BETA_THINKING = [
   "interleaved-thinking-2025-05-14",
-  "output-128k-2025-02-19",
   "effort-2025-11-24",
-  "token-efficient-tools-2025-02-19",
   "tool-examples-2025-10-29",
-  "extended-cache-ttl-2025-02-19",
-].join(",");
+];
+
+/** 1M context opt-in — only for *-1m model variants */
+const BETA_1M_FLAG = "context-1m-2025-08-07";
+
+/**
+ * Anthropic Messages API rejects payloads where the last message has
+ * role "assistant" ("This model does not support assistant message prefill").
+ * When that happens, append a synthetic user message as a spacer so the
+ * conversation ends on a user turn.
+ *
+ * Returns the original array reference when no fix is needed (no allocation).
+ */
+function fixTrailingAssistant(messages: unknown[]): unknown[] {
+  const last = messages[messages.length - 1];
+  if (!last || typeof last !== "object") return messages;
+  if ((last as Record<string, unknown>).role !== "assistant") return messages;
+  return [...messages, { role: "user", content: "." }];
+}
 
 // ---------------------------------------------------------------------------
 // Model classification — pure functions
@@ -109,10 +126,13 @@ function modelSupportsTools(modelId: string): boolean {
  *
  * pi-ai's Anthropic provider only emits `ttl: "1h"` when `baseUrl.includes
  * ("api.anthropic.com")`. Snowflake Cortex uses its own hostname, so without
- * this patch every breakpoint is a 5-minute TTL. Snowflake Cortex supports
- * the extended cache TTL beta (sent via `anthropic-beta`), and cache writes
- * are free on Cortex while reads are billed at 10% of input — so promoting
- * is strictly cheaper.
+ * this patch every breakpoint is a 5-minute TTL.
+ *
+ * Snowflake Cortex natively supports `ttl: "1h"` in `cache_control` objects —
+ * no beta header required. This is distinct from the native Anthropic API,
+ * which needs the `extended-cache-ttl-2025-02-19` beta header to unlock 1h
+ * TTL. The beta header was removed from this gateway because Cortex rejects
+ * it with a 400, but the `ttl` field itself IS honored by Cortex.
  */
 function promoteEphemeralCacheToLongTtl(payload: Record<string, unknown>): void {
   const promote = (block: unknown): void => {
@@ -239,8 +259,13 @@ const COST_MISTRAL_L2 = { input: 0.000002,   output: 0.000006,   cacheRead: 0, c
 const COST_DEEPSEEK   = { input: 0.00000135, output: 0.0000054,  cacheRead: 0, cacheWrite: 0 }; // $1.35/$5.40 per 1M
 const COST_ARCTIC     = { input: 0,          output: 0,           cacheRead: 0, cacheWrite: 0 }; // Snowflake native — free tier
 
+/** Catalog-level beta headers — always-safe flags only. Thinking flags are
+ *  added per-request in wrapStreamFn based on ctx.thinkingLevel. */
 function anthropicBetaHeaders(extendedContext = false): Record<string, string> {
-  return { "anthropic-beta": extendedContext ? ANTHROPIC_BETA_1M : ANTHROPIC_BETA_DEFAULT };
+  const flags = extendedContext
+    ? [BETA_1M_FLAG, ...BETA_ALWAYS]
+    : BETA_ALWAYS;
+  return { "anthropic-beta": flags.join(",") };
 }
 
 /** Map a Claude model ID to its cost tier */
@@ -484,29 +509,58 @@ export default definePluginEntry({
       },
 
       // -----------------------------------------------------------------------
-      // Hook 20: Inject Snowflake PAT header type + promote ephemeral cache
+      // Hook 20: Inject Snowflake PAT header type, conditionally add thinking
+      // beta flags based on ctx.thinkingLevel, and promote ephemeral cache
       // breakpoints to 1h TTL for Claude models.
+      //
+      // Beta flags are split: always-safe flags come from the catalog headers,
+      // while thinking-specific flags (interleaved-thinking, effort,
+      // tool-examples) are only added when the request uses thinking. This
+      // prevents Snowflake Cortex from rejecting unknown beta flags with 400.
       //
       // pi-ai's Anthropic provider only attaches `ttl: "1h"` when the baseUrl
       // includes "api.anthropic.com". Snowflake Cortex's endpoint does not,
       // so cache breakpoints default to the 5-minute TTL. Snowflake Cortex
-      // accepts the extended cache TTL beta header (added above to
-      // ANTHROPIC_BETA_DEFAULT / ANTHROPIC_BETA_1M), and cache writes are
-      // free on Cortex — cache reads are 10% of input price — so promoting
-      // every breakpoint to 1h is strictly cheaper.
+      // accepts the extended cache TTL beta header (added above in
+      // BETA_ALWAYS), and cache writes are free on Cortex — cache reads are
+      // 10% of input price — so promoting every breakpoint to 1h is strictly
+      // cheaper.
       // -----------------------------------------------------------------------
       wrapStreamFn(ctx: ProviderWrapStreamFnContext) {
         if (!ctx.streamFn) return undefined;
 
         const inner = ctx.streamFn;
+
+        // Determine thinking flags once — only include when thinking is
+        // active for this request. ctx.thinkingLevel is "off" or undefined
+        // when thinking isn't in use.
+        const thinkingActive =
+          ctx.thinkingLevel !== undefined && ctx.thinkingLevel !== "off";
+
         return (model, context, options) => {
           const originalOnPayload = options?.onPayload;
+
+          // Build per-request anthropic-beta header: start with any
+          // catalog-level flags from the model definition, then append
+          // thinking flags when the request actually uses thinking.
+          const catalogBeta =
+            (model as { headers?: Record<string, string> })?.headers?.[
+              "anthropic-beta"
+            ] ?? "";
+          const betaFlags = catalogBeta ? [catalogBeta] : [];
+          if (thinkingActive) {
+            betaFlags.push(BETA_THINKING.join(","));
+          }
+
           const merged = {
             ...options,
             headers: {
               ...options?.headers,
               "X-Snowflake-Authorization-Token-Type":
                 "PROGRAMMATIC_ACCESS_TOKEN",
+              ...(betaFlags.length > 0
+                ? { "anthropic-beta": betaFlags.join(",") }
+                : {}),
             },
             onPayload: (payload: unknown, payloadModel: unknown) => {
               if (
@@ -514,7 +568,11 @@ export default definePluginEntry({
                 typeof payload === "object" &&
                 isClaudeModel(String((model as { id?: unknown })?.id ?? ""))
               ) {
-                promoteEphemeralCacheToLongTtl(payload as Record<string, unknown>);
+                const record = payload as Record<string, unknown>;
+                if (Array.isArray(record.messages)) {
+                  record.messages = fixTrailingAssistant(record.messages);
+                }
+                promoteEphemeralCacheToLongTtl(record);
               }
               return (originalOnPayload as
                 | ((p: unknown, m: unknown) => unknown)
