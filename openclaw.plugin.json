@@ -3,8 +3,13 @@
   "name": "Snowflake Cortex",
   "description": "Snowflake Cortex AI provider — routes Claude models to the Anthropic Messages API and all others to Chat Completions. PAT auth.",
   "providers": ["snowflake-cortex"],
-  "providerAuthEnvVars": {
-    "snowflake-cortex": ["SNOWFLAKE_PAT", "SNOWFLAKE_CORTEX_API_KEY", "SNOWFLAKE_BASE_URL"]
+  "setup": {
+    "providers": [
+      {
+        "id": "snowflake-cortex",
+        "envVars": ["SNOWFLAKE_PAT", "SNOWFLAKE_CORTEX_API_KEY", "SNOWFLAKE_BASE_URL"]
+      }
+    ]
   },
   "providerAuthChoices": [
     {

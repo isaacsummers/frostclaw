@@ -3,13 +3,19 @@ set -euo pipefail
 
 # OpenClaw post-update hook
 # Called by mise postinstall after npm:openclaw upgrades.
-# Handles: openclaw update, frostclaw rebuild, embed proxy restart.
+# Handles: gateway service refresh, frostclaw rebuild, embed proxy restart.
 
 FROSTCLAW_DIR="${FROSTCLAW_DIR:-$HOME/projects/frostclaw}"
+GATEWAY_SVC="$HOME/.config/systemd/user/openclaw-gateway.service"
 
-echo "==> Running openclaw update..."
-openclaw update --yes
+# Refresh the gateway systemd service so ExecStart points at the new version.
+if [ -f "$GATEWAY_SVC" ]; then
+  echo "==> Refreshing openclaw gateway service..."
+  # Stop first so openclaw gateway install doesn't see a port conflict.
+  systemctl --user stop openclaw-gateway.service 2>/dev/null || true
+fi
 
+# Rebuild frostclaw BEFORE gateway install/start so dist/index.js is fresh.
 if [ -d "$FROSTCLAW_DIR" ]; then
   echo "==> Rebuilding frostclaw plugin..."
   cd "$FROSTCLAW_DIR"
@@ -18,10 +24,21 @@ if [ -d "$FROSTCLAW_DIR" ]; then
   bun install 2>/dev/null || true
   bun run build
 
-  echo "==> Restarting embed proxy..."
-  systemctl --user restart snowflake-embed-proxy 2>/dev/null || true
-
   echo "==> Frostclaw rebuilt successfully"
 else
   echo "==> Frostclaw not found at $FROSTCLAW_DIR, skipping plugin rebuild"
+fi
+
+if [ -f "$GATEWAY_SVC" ]; then
+  openclaw gateway install --force 2>/dev/null || echo "  ⚠️  openclaw gateway install failed"
+
+  systemctl --user daemon-reload 2>/dev/null || true
+  systemctl --user start openclaw-gateway.service 2>/dev/null && \
+    echo "  ✅ openclaw-gateway.service started" || \
+    echo "  ⚠️  could not start openclaw-gateway.service"
+fi
+
+if [ -d "$FROSTCLAW_DIR" ]; then
+  echo "==> Restarting embed proxy..."
+  systemctl --user restart snowflake-embed-proxy 2>/dev/null || true
 fi

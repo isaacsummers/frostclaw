@@ -9,23 +9,24 @@ function getApiKey() {
 function getBaseURL() {
   return process.env.SNOWFLAKE_BASE_URL ?? "";
 }
-var ANTHROPIC_BETA_DEFAULT = [
-  "interleaved-thinking-2025-05-14",
+var BETA_ALWAYS = [
   "output-128k-2025-02-19",
-  "effort-2025-11-24",
-  "token-efficient-tools-2025-02-19",
-  "tool-examples-2025-10-29",
-  "extended-cache-ttl-2025-02-19"
-].join(",");
-var ANTHROPIC_BETA_1M = [
-  "context-1m-2025-08-07",
+  "token-efficient-tools-2025-02-19"
+];
+var BETA_THINKING = [
   "interleaved-thinking-2025-05-14",
-  "output-128k-2025-02-19",
   "effort-2025-11-24",
-  "token-efficient-tools-2025-02-19",
-  "tool-examples-2025-10-29",
-  "extended-cache-ttl-2025-02-19"
-].join(",");
+  "tool-examples-2025-10-29"
+];
+var BETA_1M_FLAG = "context-1m-2025-08-07";
+function fixTrailingAssistant(messages) {
+  const last = messages[messages.length - 1];
+  if (!last || typeof last !== "object")
+    return messages;
+  if (last.role !== "assistant")
+    return messages;
+  return [...messages, { role: "user", content: "." }];
+}
 function isClaudeModel(modelId) {
   return modelId.toLowerCase().startsWith("claude");
 }
@@ -112,7 +113,8 @@ var COST_MISTRAL_L2 = { input: 0.000002, output: 0.000006, cacheRead: 0, cacheWr
 var COST_DEEPSEEK = { input: 0.00000135, output: 0.0000054, cacheRead: 0, cacheWrite: 0 };
 var COST_ARCTIC = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 function anthropicBetaHeaders(extendedContext = false) {
-  return { "anthropic-beta": extendedContext ? ANTHROPIC_BETA_1M : ANTHROPIC_BETA_DEFAULT };
+  const flags = extendedContext ? [BETA_1M_FLAG, ...BETA_ALWAYS] : BETA_ALWAYS;
+  return { "anthropic-beta": flags.join(",") };
 }
 function claudeCost(id) {
   if (id.startsWith("claude-opus"))
@@ -307,17 +309,28 @@ var frostclaw_default = definePluginEntry({
         if (!ctx.streamFn)
           return;
         const inner = ctx.streamFn;
+        const thinkingActive = ctx.thinkingLevel !== undefined && ctx.thinkingLevel !== "off";
         return (model, context, options) => {
           const originalOnPayload = options?.onPayload;
+          const catalogBeta = model?.headers?.["anthropic-beta"] ?? "";
+          const betaFlags = catalogBeta ? [catalogBeta] : [];
+          if (thinkingActive) {
+            betaFlags.push(BETA_THINKING.join(","));
+          }
           const merged = {
             ...options,
             headers: {
               ...options?.headers,
-              "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN"
+              "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN",
+              ...betaFlags.length > 0 ? { "anthropic-beta": betaFlags.join(",") } : {}
             },
             onPayload: (payload, payloadModel) => {
               if (payload && typeof payload === "object" && isClaudeModel(String(model?.id ?? ""))) {
-                promoteEphemeralCacheToLongTtl(payload);
+                const record = payload;
+                if (Array.isArray(record.messages)) {
+                  record.messages = fixTrailingAssistant(record.messages);
+                }
+                promoteEphemeralCacheToLongTtl(record);
               }
               return originalOnPayload?.(payload, payloadModel);
             }
