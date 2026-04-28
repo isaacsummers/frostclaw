@@ -2,6 +2,7 @@
 import {
   definePluginEntry
 } from "openclaw/plugin-sdk/plugin-entry";
+import { resolveClaudeThinkingProfile } from "openclaw/plugin-sdk/provider-model-shared";
 import { createProviderApiKeyAuthMethod } from "openclaw/plugin-sdk/provider-auth-api-key";
 function getApiKey() {
   return process.env.SNOWFLAKE_PAT ?? process.env.SNOWFLAKE_CORTEX_API_KEY ?? "";
@@ -27,13 +28,31 @@ function fixTrailingAssistant(messages) {
     return messages;
   return messages.slice(0, -1);
 }
-function downgradeAdaptiveThinking(payload) {
+function levelBudget(thinkingLevel) {
+  switch (thinkingLevel) {
+    case "minimal":
+      return 1024;
+    case "low":
+      return 4000;
+    case "medium":
+      return 8000;
+    case "high":
+      return 16000;
+    case "adaptive":
+    default:
+      return 16000;
+  }
+}
+function normalizeThinkingBudget(payload, thinkingLevel) {
   const thinking = payload.thinking;
   if (!thinking || typeof thinking !== "object")
     return;
-  if (thinking.type !== "adaptive")
+  const t = thinking;
+  if (t.type === "disabled")
     return;
-  payload.thinking = { type: "enabled", budget_tokens: 8000 };
+  if (t.type === "adaptive" || t.type === "enabled") {
+    payload.thinking = { type: "enabled", budget_tokens: levelBudget(thinkingLevel) };
+  }
 }
 function isClaudeModel(modelId) {
   return modelId.toLowerCase().startsWith("claude");
@@ -318,6 +337,7 @@ var frostclaw_default = definePluginEntry({
           return;
         const inner = ctx.streamFn;
         const thinkingActive = ctx.thinkingLevel !== undefined && ctx.thinkingLevel !== "off";
+        const thinkingLevel = ctx.thinkingLevel;
         return (model, context, options) => {
           const originalOnPayload = options?.onPayload;
           const catalogBeta = model?.headers?.["anthropic-beta"] ?? "";
@@ -338,7 +358,7 @@ var frostclaw_default = definePluginEntry({
                 if (Array.isArray(record.messages)) {
                   record.messages = fixTrailingAssistant(record.messages);
                 }
-                downgradeAdaptiveThinking(record);
+                normalizeThinkingBudget(record, thinkingLevel);
                 promoteEphemeralCacheToLongTtl(record);
               }
               return originalOnPayload?.(payload, payloadModel);
@@ -346,6 +366,12 @@ var frostclaw_default = definePluginEntry({
           };
           return inner(model, context, merged);
         };
+      },
+      resolveThinkingProfile(ctx) {
+        if (isClaudeModel(ctx.modelId)) {
+          return resolveClaudeThinkingProfile(ctx.modelId);
+        }
+        return null;
       },
       buildReplayPolicy(ctx) {
         if (!ctx.modelId)

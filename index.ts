@@ -19,6 +19,7 @@ import {
   type ProviderReplayPolicyContext,
   type ProviderNormalizeModelIdContext,
 } from "openclaw/plugin-sdk/plugin-entry";
+import { resolveClaudeThinkingProfile } from "openclaw/plugin-sdk/provider-model-shared";
 import type {
   MemoryEmbeddingProviderAdapter,
   MemoryEmbeddingProviderCreateOptions,
@@ -110,19 +111,40 @@ function fixTrailingAssistant(messages: unknown[]): unknown[] {
 }
 
 /**
- * Snowflake Cortex doesn't support `{ type: "adaptive" }` thinking —
- * it only accepts `{ type: "enabled", budget_tokens: N }` or
- * `{ type: "disabled" }`. Sending "adaptive" returns HTTP 400.
- *
- * Downgrade adaptive → enabled with a reasonable 8000-token budget.
- * Snowflake caps budget_tokens server-side anyway, so the exact value
- * isn't critical; 8000 is a sensible middle-ground.
+ * Map a thinking level to a sensible budget_tokens value for Snowflake Cortex.
+ * Snowflake caps budget_tokens server-side, so these are reasonable targets.
  */
-function downgradeAdaptiveThinking(payload: Record<string, unknown>): void {
+function levelBudget(thinkingLevel: string | undefined): number {
+  switch (thinkingLevel) {
+    case "minimal": return 1024;
+    case "low":     return 4000;
+    case "medium":  return 8000;
+    case "high":    return 16000;
+    case "adaptive":
+    default:        return 16000;
+  }
+}
+
+/**
+ * Normalize the `thinking` field in an Anthropic payload for Snowflake Cortex:
+ *
+ * - `{ type: "adaptive" }` → `{ type: "enabled", budget_tokens: levelBudget(level) }`
+ *   (Snowflake rejects "adaptive" with HTTP 400)
+ * - `{ type: "enabled", budget_tokens: N }` → overwrite budget with levelBudget(level)
+ *   (corrects OpenClaw's 1024 fallback for non-adaptive levels)
+ * - `{ type: "disabled" }` → left untouched
+ */
+function normalizeThinkingBudget(
+  payload: Record<string, unknown>,
+  thinkingLevel: string | undefined,
+): void {
   const thinking = payload.thinking;
   if (!thinking || typeof thinking !== "object") return;
-  if ((thinking as Record<string, unknown>).type !== "adaptive") return;
-  payload.thinking = { type: "enabled", budget_tokens: 8000 };
+  const t = thinking as Record<string, unknown>;
+  if (t.type === "disabled") return;
+  if (t.type === "adaptive" || t.type === "enabled") {
+    payload.thinking = { type: "enabled", budget_tokens: levelBudget(thinkingLevel) };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -562,6 +584,7 @@ export default definePluginEntry({
         // context param (messages, tools, systemPrompt) does not carry it.
         const thinkingActive =
           ctx.thinkingLevel !== undefined && ctx.thinkingLevel !== "off";
+        const thinkingLevel = ctx.thinkingLevel;
 
         return (model, context, options) => {
           const originalOnPayload = options?.onPayload;
@@ -598,7 +621,7 @@ export default definePluginEntry({
                 if (Array.isArray(record.messages)) {
                   record.messages = fixTrailingAssistant(record.messages);
                 }
-                downgradeAdaptiveThinking(record);
+                normalizeThinkingBudget(record, thinkingLevel);
                 promoteEphemeralCacheToLongTtl(record);
               }
               return (originalOnPayload as
@@ -608,6 +631,17 @@ export default definePluginEntry({
           };
           return inner(model, context, merged as typeof options);
         };
+      },
+
+      // -----------------------------------------------------------------------
+      // Thinking profile: expose adaptive and all supported levels for Claude
+      // models so the Control UI thinking dropdown shows them correctly.
+      // -----------------------------------------------------------------------
+      resolveThinkingProfile(ctx) {
+        if (isClaudeModel(ctx.modelId)) {
+          return resolveClaudeThinkingProfile(ctx.modelId);
+        }
+        return null;
       },
 
       // -----------------------------------------------------------------------
