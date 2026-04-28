@@ -638,10 +638,11 @@ export default definePluginEntry({
       // models so the Control UI thinking dropdown shows them correctly.
       // -----------------------------------------------------------------------
       resolveThinkingProfile(ctx) {
-        if (isClaudeModel(ctx.modelId)) {
-          return resolveClaudeThinkingProfile(ctx.modelId);
-        }
-        return null;
+        if (!ctx.modelId) return null;
+        if (!isClaudeModel(ctx.modelId)) return null;
+        // Strip the "snowflake-cortex/" prefix before calling the SDK function
+        const bareId = ctx.modelId.replace(/^snowflake-cortex\//, "");
+        return resolveClaudeThinkingProfile(bareId) ?? null;
       },
 
       // -----------------------------------------------------------------------
