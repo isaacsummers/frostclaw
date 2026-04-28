@@ -86,18 +86,43 @@ const BETA_THINKING = [
 const BETA_1M_FLAG = "context-1m-2025-08-07";
 
 /**
- * Anthropic Messages API rejects payloads where the last message has
- * role "assistant" ("This model does not support assistant message prefill").
- * When that happens, append a synthetic user message as a spacer so the
- * conversation ends on a user turn.
+ * Claude 4.6+ (Opus, Sonnet) dropped assistant message prefill support.
+ * Any payload ending with role "assistant" returns HTTP 400:
+ *   "This model does not support assistant message prefill."
  *
- * Returns the original array reference when no fix is needed (no allocation).
+ * The trailing assistant message is always a complete, already-delivered
+ * prior turn — typically produced by context compaction or session resume.
+ * Trimming it is safe: no content the user hasn't seen is lost, earlier
+ * cache breakpoints are unaffected (Anthropic cache keys are prefix-based),
+ * and the model regenerates correctly from the preceding user turn.
+ *
+ * We trim rather than inject a synthetic user turn because injection
+ * changes conversation semantics — the model responds to the injected
+ * content rather than continuing naturally.
+ *
+ * Returns the original array reference when no trim is needed (no allocation).
  */
 function fixTrailingAssistant(messages: unknown[]): unknown[] {
   const last = messages[messages.length - 1];
   if (!last || typeof last !== "object") return messages;
   if ((last as Record<string, unknown>).role !== "assistant") return messages;
-  return [...messages, { role: "user", content: "." }];
+  return messages.slice(0, -1);
+}
+
+/**
+ * Snowflake Cortex doesn't support `{ type: "adaptive" }` thinking —
+ * it only accepts `{ type: "enabled", budget_tokens: N }` or
+ * `{ type: "disabled" }`. Sending "adaptive" returns HTTP 400.
+ *
+ * Downgrade adaptive → enabled with a reasonable 8000-token budget.
+ * Snowflake caps budget_tokens server-side anyway, so the exact value
+ * isn't critical; 8000 is a sensible middle-ground.
+ */
+function downgradeAdaptiveThinking(payload: Record<string, unknown>): void {
+  const thinking = payload.thinking;
+  if (!thinking || typeof thinking !== "object") return;
+  if ((thinking as Record<string, unknown>).type !== "adaptive") return;
+  payload.thinking = { type: "enabled", budget_tokens: 8000 };
 }
 
 // ---------------------------------------------------------------------------
@@ -531,9 +556,10 @@ export default definePluginEntry({
 
         const inner = ctx.streamFn;
 
-        // Determine thinking flags once — only include when thinking is
-        // active for this request. ctx.thinkingLevel is "off" or undefined
-        // when thinking isn't in use.
+        // OpenClaw re-invokes wrapStreamFn(ctx) fresh per request, so
+        // ctx.thinkingLevel is current here — not stale from registration time.
+        // thinkingLevel must be read from the outer ctx; the inner StreamFn's
+        // context param (messages, tools, systemPrompt) does not carry it.
         const thinkingActive =
           ctx.thinkingLevel !== undefined && ctx.thinkingLevel !== "off";
 
@@ -572,6 +598,7 @@ export default definePluginEntry({
                 if (Array.isArray(record.messages)) {
                   record.messages = fixTrailingAssistant(record.messages);
                 }
+                downgradeAdaptiveThinking(record);
                 promoteEphemeralCacheToLongTtl(record);
               }
               return (originalOnPayload as

@@ -25,7 +25,15 @@ function fixTrailingAssistant(messages) {
     return messages;
   if (last.role !== "assistant")
     return messages;
-  return [...messages, { role: "user", content: "." }];
+  return messages.slice(0, -1);
+}
+function downgradeAdaptiveThinking(payload) {
+  const thinking = payload.thinking;
+  if (!thinking || typeof thinking !== "object")
+    return;
+  if (thinking.type !== "adaptive")
+    return;
+  payload.thinking = { type: "enabled", budget_tokens: 8000 };
 }
 function isClaudeModel(modelId) {
   return modelId.toLowerCase().startsWith("claude");
@@ -330,6 +338,7 @@ var frostclaw_default = definePluginEntry({
                 if (Array.isArray(record.messages)) {
                   record.messages = fixTrailingAssistant(record.messages);
                 }
+                downgradeAdaptiveThinking(record);
                 promoteEphemeralCacheToLongTtl(record);
               }
               return originalOnPayload?.(payload, payloadModel);
