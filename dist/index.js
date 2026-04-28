@@ -368,10 +368,12 @@ var frostclaw_default = definePluginEntry({
         };
       },
       resolveThinkingProfile(ctx) {
-        if (isClaudeModel(ctx.modelId)) {
-          return resolveClaudeThinkingProfile(ctx.modelId);
-        }
-        return null;
+        if (!ctx.modelId)
+          return null;
+        if (!isClaudeModel(ctx.modelId))
+          return null;
+        const bareId = ctx.modelId.replace(/^snowflake-cortex\//, "");
+        return resolveClaudeThinkingProfile(bareId) ?? null;
       },
       buildReplayPolicy(ctx) {
         if (!ctx.modelId)
