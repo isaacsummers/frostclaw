@@ -19,7 +19,6 @@ var BETA_THINKING = [
   "effort-2025-11-24",
   "tool-examples-2025-10-29"
 ];
-var BETA_1M_FLAG = "context-1m-2025-08-07";
 function fixTrailingAssistant(messages) {
   const last = messages[messages.length - 1];
   if (!last || typeof last !== "object")
@@ -27,6 +26,26 @@ function fixTrailingAssistant(messages) {
   if (last.role !== "assistant")
     return messages;
   return messages.slice(0, -1);
+}
+function fixEmptyTextBlocks(messages) {
+  return messages.map((msg) => {
+    if (!msg || typeof msg !== "object")
+      return msg;
+    const m = msg;
+    if (!Array.isArray(m.content))
+      return msg;
+    const fixed = m.content.map((block) => {
+      if (!block || typeof block !== "object")
+        return block;
+      const b = block;
+      if (b.type !== "text" || typeof b.text !== "string")
+        return block;
+      if (b.text.trim() === "")
+        return { ...b, text: "​" };
+      return block;
+    });
+    return { ...m, content: fixed };
+  });
 }
 function levelBudget(thinkingLevel) {
   switch (thinkingLevel) {
@@ -37,10 +56,21 @@ function levelBudget(thinkingLevel) {
     case "medium":
       return 8000;
     case "high":
-      return 16000;
-    case "adaptive":
     default:
       return 16000;
+  }
+}
+function levelEffort(thinkingLevel) {
+  switch (thinkingLevel) {
+    case "minimal":
+    case "low":
+      return "low";
+    case "medium":
+      return "medium";
+    case "high":
+    case "adaptive":
+    default:
+      return "high";
   }
 }
 function normalizeThinkingBudget(payload, thinkingLevel) {
@@ -50,7 +80,13 @@ function normalizeThinkingBudget(payload, thinkingLevel) {
   const t = thinking;
   if (t.type === "disabled")
     return;
-  if (t.type === "adaptive" || t.type === "enabled") {
+  if (t.type === "adaptive") {
+    const effort = levelEffort(thinkingLevel);
+    const existing = payload.output_config;
+    payload.output_config = { ...existing, effort };
+    return;
+  }
+  if (t.type === "enabled") {
     payload.thinking = { type: "enabled", budget_tokens: levelBudget(thinkingLevel) };
   }
 }
@@ -60,48 +96,12 @@ function isClaudeModel(modelId) {
 function modelSupportsTools(modelId) {
   return modelId.toLowerCase().startsWith("openai-");
 }
-function promoteEphemeralCacheToLongTtl(payload) {
-  const promote = (block) => {
-    if (!block || typeof block !== "object")
-      return;
-    const record = block;
-    const cc = record.cache_control;
-    if (cc && typeof cc === "object" && cc.type === "ephemeral" && cc.ttl === undefined) {
-      cc.ttl = "1h";
-    }
-  };
-  const system = payload.system;
-  if (Array.isArray(system)) {
-    for (const block of system)
-      promote(block);
-  }
-  const messages = payload.messages;
-  if (Array.isArray(messages)) {
-    for (const msg of messages) {
-      if (!msg || typeof msg !== "object")
-        continue;
-      const content = msg.content;
-      if (Array.isArray(content)) {
-        for (const block of content)
-          promote(block);
-      }
-    }
-  }
-  const tools = payload.tools;
-  if (Array.isArray(tools)) {
-    for (const tool of tools)
-      promote(tool);
-  }
-}
 var CLAUDE_MODELS = [
   { id: "claude-opus-4-7", name: "Claude Opus 4.7", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-opus-4-6", name: "Claude Opus 4.6", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-opus-4-5", name: "Claude Opus 4.5", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
-  { id: "claude-opus-4-7-1m", name: "Claude Opus 4.7 (1M)", reasoning: true, contextWindow: 1e6, maxTokens: 128000, input: ["text", "image"], extendedContext: true },
-  { id: "claude-opus-4-6-1m", name: "Claude Opus 4.6 (1M)", reasoning: true, contextWindow: 1e6, maxTokens: 128000, input: ["text", "image"], extendedContext: true },
-  { id: "claude-sonnet-4-6-1m", name: "Claude Sonnet 4.6 (1M)", reasoning: true, contextWindow: 1e6, maxTokens: 128000, input: ["text", "image"], extendedContext: true }
+  { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] }
 ];
 var OPENAI_MODELS = [
   { id: "openai-gpt-5.4", name: "GPT-5.4", reasoning: true, contextWindow: 128000, maxTokens: 32768, input: ["text", "image"] },
@@ -139,9 +139,8 @@ var COST_MISTRAL_L = { input: 0.000002, output: 0.000006, cacheRead: 0, cacheWri
 var COST_MISTRAL_L2 = { input: 0.000002, output: 0.000006, cacheRead: 0, cacheWrite: 0 };
 var COST_DEEPSEEK = { input: 0.00000135, output: 0.0000054, cacheRead: 0, cacheWrite: 0 };
 var COST_ARCTIC = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-function anthropicBetaHeaders(extendedContext = false) {
-  const flags = extendedContext ? [BETA_1M_FLAG, ...BETA_ALWAYS] : BETA_ALWAYS;
-  return { "anthropic-beta": flags.join(",") };
+function anthropicBetaHeaders() {
+  return { "anthropic-beta": BETA_ALWAYS.join(",") };
 }
 function claudeCost(id) {
   if (id.startsWith("claude-opus"))
@@ -162,7 +161,7 @@ function buildClaudeModelDef(spec) {
     cost: claudeCost(spec.id),
     contextWindow: spec.contextWindow,
     maxTokens: spec.maxTokens,
-    headers: anthropicBetaHeaders(spec.extendedContext),
+    headers: anthropicBetaHeaders(),
     compat: { supportsTools: true }
   };
 }
@@ -329,9 +328,6 @@ var frostclaw_default = definePluginEntry({
           return [];
         return ctx.tools;
       },
-      normalizeModelId(ctx) {
-        return ctx.modelId.replace(/-1m$/, "") || null;
-      },
       wrapStreamFn(ctx) {
         if (!ctx.streamFn)
           return;
@@ -357,9 +353,9 @@ var frostclaw_default = definePluginEntry({
                 const record = payload;
                 if (Array.isArray(record.messages)) {
                   record.messages = fixTrailingAssistant(record.messages);
+                  record.messages = fixEmptyTextBlocks(record.messages);
                 }
                 normalizeThinkingBudget(record, thinkingLevel);
-                promoteEphemeralCacheToLongTtl(record);
               }
               return originalOnPayload?.(payload, payloadModel);
             }

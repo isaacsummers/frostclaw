@@ -17,7 +17,6 @@ import {
   type ProviderWrapStreamFnContext,
   type ProviderNormalizeToolSchemasContext,
   type ProviderReplayPolicyContext,
-  type ProviderNormalizeModelIdContext,
 } from "openclaw/plugin-sdk/plugin-entry";
 import { resolveClaudeThinkingProfile } from "openclaw/plugin-sdk/provider-model-shared";
 import type {
@@ -83,8 +82,6 @@ const BETA_THINKING = [
   "tool-examples-2025-10-29",
 ];
 
-/** 1M context opt-in — only for *-1m model variants */
-const BETA_1M_FLAG = "context-1m-2025-08-07";
 
 /**
  * Claude 4.6+ (Opus, Sonnet) dropped assistant message prefill support.
@@ -111,28 +108,65 @@ function fixTrailingAssistant(messages: unknown[]): unknown[] {
 }
 
 /**
- * Map a thinking level to a sensible budget_tokens value for Snowflake Cortex.
- * Snowflake caps budget_tokens server-side, so these are reasonable targets.
+ * Snowflake Cortex rejects text content blocks with empty or whitespace-only
+ * text. Replace empty/whitespace strings with a zero-width space so the block
+ * structure is preserved while satisfying the API constraint.
+ * This handles the /new command case where OpenClaw sends a blank user turn.
+ */
+function fixEmptyTextBlocks(messages: unknown[]): unknown[] {
+  return messages.map((msg) => {
+    if (!msg || typeof msg !== "object") return msg;
+    const m = msg as Record<string, unknown>;
+    if (!Array.isArray(m.content)) return msg;
+    const fixed = m.content.map((block: unknown) => {
+      if (!block || typeof block !== "object") return block;
+      const b = block as Record<string, unknown>;
+      if (b.type !== "text" || typeof b.text !== "string") return block;
+      if (b.text.trim() === "") return { ...b, text: "\u200b" };
+      return block;
+    });
+    return { ...m, content: fixed };
+  });
+}
+
+/**
+ * Map a thinking level to a budget_tokens value for non-adaptive (enabled) thinking.
+ * Used only when the thinking type is "enabled" (explicit budget path).
  */
 function levelBudget(thinkingLevel: string | undefined): number {
   switch (thinkingLevel) {
     case "minimal": return 1024;
     case "low":     return 4000;
     case "medium":  return 8000;
-    case "high":    return 16000;
-    case "adaptive":
+    case "high":
     default:        return 16000;
+  }
+}
+
+/**
+ * Map a thinking level to Snowflake Cortex's output_config.effort value.
+ * Snowflake uses effort (max/high/medium/low) instead of budget_tokens for
+ * adaptive thinking depth control.
+ */
+function levelEffort(thinkingLevel: string | undefined): string {
+  switch (thinkingLevel) {
+    case "minimal":
+    case "low":      return "low";
+    case "medium":   return "medium";
+    case "high":
+    case "adaptive":
+    default:         return "high";
   }
 }
 
 /**
  * Normalize the `thinking` field in an Anthropic payload for Snowflake Cortex:
  *
- * - `{ type: "adaptive" }` → `{ type: "enabled", budget_tokens: levelBudget(level) }`
- *   (Snowflake rejects "adaptive" with HTTP 400)
- * - `{ type: "enabled", budget_tokens: N }` → overwrite budget with levelBudget(level)
- *   (corrects OpenClaw's 1024 fallback for non-adaptive levels)
- * - `{ type: "disabled" }` → left untouched
+ * - `{ type: "adaptive" }` → left as-is; set output_config.effort from thinkingLevel.
+ *   Snowflake natively supports adaptive thinking with { type: "adaptive" }.
+ * - `{ type: "enabled", budget_tokens: N }` → overwrite budget with levelBudget(level).
+ *   Corrects OpenClaw's 1024 fallback for non-adaptive levels.
+ * - `{ type: "disabled" }` → left untouched.
  */
 function normalizeThinkingBudget(
   payload: Record<string, unknown>,
@@ -142,7 +176,18 @@ function normalizeThinkingBudget(
   if (!thinking || typeof thinking !== "object") return;
   const t = thinking as Record<string, unknown>;
   if (t.type === "disabled") return;
-  if (t.type === "adaptive" || t.type === "enabled") {
+
+  if (t.type === "adaptive") {
+    // Snowflake supports { type: "adaptive" } natively — leave it intact.
+    // Map the thinking level to output_config.effort for depth control.
+    const effort = levelEffort(thinkingLevel);
+    const existing = payload.output_config as Record<string, unknown> | undefined;
+    payload.output_config = { ...existing, effort };
+    return;
+  }
+
+  if (t.type === "enabled") {
+    // Explicit budget path — overwrite budget_tokens with level-appropriate value.
     payload.thinking = { type: "enabled", budget_tokens: levelBudget(thinkingLevel) };
   }
 }
@@ -167,62 +212,12 @@ function modelSupportsTools(modelId: string): boolean {
   return modelId.toLowerCase().startsWith("openai-");
 }
 
-/**
- * Walk an Anthropic-shaped request payload and promote every ephemeral
- * cache_control breakpoint to `{ type: "ephemeral", ttl: "1h" }`.
- *
- * pi-ai's Anthropic provider only emits `ttl: "1h"` when `baseUrl.includes
- * ("api.anthropic.com")`. Snowflake Cortex uses its own hostname, so without
- * this patch every breakpoint is a 5-minute TTL.
- *
- * Snowflake Cortex natively supports `ttl: "1h"` in `cache_control` objects —
- * no beta header required. This is distinct from the native Anthropic API,
- * which needs the `extended-cache-ttl-2025-02-19` beta header to unlock 1h
- * TTL. The beta header was removed from this gateway because Cortex rejects
- * it with a 400, but the `ttl` field itself IS honored by Cortex.
- */
-function promoteEphemeralCacheToLongTtl(payload: Record<string, unknown>): void {
-  const promote = (block: unknown): void => {
-    if (!block || typeof block !== "object") return;
-    const record = block as Record<string, unknown>;
-    const cc = record.cache_control;
-    if (
-      cc &&
-      typeof cc === "object" &&
-      (cc as Record<string, unknown>).type === "ephemeral" &&
-      (cc as Record<string, unknown>).ttl === undefined
-    ) {
-      (cc as Record<string, unknown>).ttl = "1h";
-    }
-  };
-
-  // system: may be string | Array<{ type, text, cache_control? }>
-  const system = payload.system;
-  if (Array.isArray(system)) {
-    for (const block of system) promote(block);
-  }
-
-  // messages: Array<{ role, content: string | Array<block> }>
-  const messages = payload.messages;
-  if (Array.isArray(messages)) {
-    for (const msg of messages) {
-      if (!msg || typeof msg !== "object") continue;
-      const content = (msg as Record<string, unknown>).content;
-      if (Array.isArray(content)) {
-        for (const block of content) promote(block);
-      }
-    }
-  }
-
-  // tools: Array<{ ..., cache_control? }>
-  const tools = payload.tools;
-  if (Array.isArray(tools)) {
-    for (const tool of tools) promote(tool);
-  }
-}
+// Note: Snowflake Cortex only supports the 5-minute ephemeral TTL for prompt
+// caching. Injecting ttl:"1h" is not supported and may cause unexpected
+// behavior. Cache breakpoints are left as-is.
 
 // ---------------------------------------------------------------------------
-// Model catalog — all 16 Cortex models with per-model API routing + compat
+// Model catalog — all Cortex models with per-model API routing + compat
 // ---------------------------------------------------------------------------
 
 interface CortexModelSpec {
@@ -232,19 +227,14 @@ interface CortexModelSpec {
   contextWindow: number;
   maxTokens: number;
   input: Array<"text" | "image">;
-  extendedContext?: boolean; // true → attach context-1m beta header
 }
 
 const CLAUDE_MODELS: CortexModelSpec[] = [
-  { id: "claude-opus-4-7",       name: "Claude Opus 4.7",           reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-opus-4-6",       name: "Claude Opus 4.6",           reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-opus-4-5",       name: "Claude Opus 4.5",           reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-6",     name: "Claude Sonnet 4.6",         reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-5",     name: "Claude Sonnet 4.5",         reasoning: true, contextWindow:   200_000, maxTokens: 128_000, input: ["text", "image"] },
-  // 1M context variants — requires context-1m-2025-08-07 beta header (Snowflake Cortex)
-  { id: "claude-opus-4-7-1m",   name: "Claude Opus 4.7 (1M)",   reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"], extendedContext: true },
-  { id: "claude-opus-4-6-1m",   name: "Claude Opus 4.6 (1M)",   reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"], extendedContext: true },
-  { id: "claude-sonnet-4-6-1m", name: "Claude Sonnet 4.6 (1M)", reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"], extendedContext: true },
+  { id: "claude-opus-4-7",   name: "Claude Opus 4.7",   reasoning: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-opus-4-6",   name: "Claude Opus 4.6",   reasoning: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-opus-4-5",   name: "Claude Opus 4.5",   reasoning: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
 ];
 
 const OPENAI_MODELS: CortexModelSpec[] = [
@@ -308,11 +298,8 @@ const COST_ARCTIC     = { input: 0,          output: 0,           cacheRead: 0, 
 
 /** Catalog-level beta headers — always-safe flags only. Thinking flags are
  *  added per-request in wrapStreamFn based on ctx.thinkingLevel. */
-function anthropicBetaHeaders(extendedContext = false): Record<string, string> {
-  const flags = extendedContext
-    ? [BETA_1M_FLAG, ...BETA_ALWAYS]
-    : BETA_ALWAYS;
-  return { "anthropic-beta": flags.join(",") };
+function anthropicBetaHeaders(): Record<string, string> {
+  return { "anthropic-beta": BETA_ALWAYS.join(",") };
 }
 
 /** Map a Claude model ID to its cost tier */
@@ -333,7 +320,7 @@ function buildClaudeModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
     cost: claudeCost(spec.id),
     contextWindow: spec.contextWindow,
     maxTokens: spec.maxTokens,
-    headers: anthropicBetaHeaders(spec.extendedContext),
+    headers: anthropicBetaHeaders(),
     compat: { supportsTools: true },
   };
 }
@@ -546,32 +533,13 @@ export default definePluginEntry({
       },
 
       // -----------------------------------------------------------------------
-      // Hook: Strip -1m suffix before sending model ID to Snowflake.
-      // The -1m variants are virtual catalog entries — the real wire model ID
-      // is the base name (e.g. "claude-sonnet-4-6-1m" → "claude-sonnet-4-6").
-      // The context-1m beta header is already set per-model in the catalog.
-      // -----------------------------------------------------------------------
-      normalizeModelId(ctx: ProviderNormalizeModelIdContext) {
-        return ctx.modelId.replace(/-1m$/, "") || null;
-      },
-
-      // -----------------------------------------------------------------------
-      // Hook 20: Inject Snowflake PAT header type, conditionally add thinking
-      // beta flags based on ctx.thinkingLevel, and promote ephemeral cache
-      // breakpoints to 1h TTL for Claude models.
+      // Hook: Inject Snowflake PAT header type and conditionally add thinking
+      // beta flags based on ctx.thinkingLevel for Claude models.
       //
       // Beta flags are split: always-safe flags come from the catalog headers,
       // while thinking-specific flags (interleaved-thinking, effort,
       // tool-examples) are only added when the request uses thinking. This
       // prevents Snowflake Cortex from rejecting unknown beta flags with 400.
-      //
-      // pi-ai's Anthropic provider only attaches `ttl: "1h"` when the baseUrl
-      // includes "api.anthropic.com". Snowflake Cortex's endpoint does not,
-      // so cache breakpoints default to the 5-minute TTL. Snowflake Cortex
-      // accepts the extended cache TTL beta header (added above in
-      // BETA_ALWAYS), and cache writes are free on Cortex — cache reads are
-      // 10% of input price — so promoting every breakpoint to 1h is strictly
-      // cheaper.
       // -----------------------------------------------------------------------
       wrapStreamFn(ctx: ProviderWrapStreamFnContext) {
         if (!ctx.streamFn) return undefined;
@@ -620,9 +588,9 @@ export default definePluginEntry({
                 const record = payload as Record<string, unknown>;
                 if (Array.isArray(record.messages)) {
                   record.messages = fixTrailingAssistant(record.messages);
+                  record.messages = fixEmptyTextBlocks(record.messages);
                 }
                 normalizeThinkingBudget(record, thinkingLevel);
-                promoteEphemeralCacheToLongTtl(record);
               }
               return (originalOnPayload as
                 | ((p: unknown, m: unknown) => unknown)
