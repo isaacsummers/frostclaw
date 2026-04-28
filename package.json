@@ -11,7 +11,7 @@
     "providers": ["snowflake-cortex"]
   },
   "dependencies": {
-    "openclaw": "^2026.4.24"
+    "openclaw": "file:/home/ubuntu/.local/share/mise/installs/npm-openclaw/latest/lib/node_modules/openclaw"
   },
   "devDependencies": {
     "typescript": "^6.0.2"

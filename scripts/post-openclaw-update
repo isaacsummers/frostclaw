@@ -4,9 +4,29 @@ set -euo pipefail
 # OpenClaw post-update hook
 # Called by mise postinstall after npm:openclaw upgrades.
 # Handles: gateway service refresh, frostclaw rebuild, embed proxy restart.
+#
+# mise injects MISE_TOOL_INSTALL_PATH pointing at the newly installed version dir.
+# We use it directly for `openclaw gateway install` so the shim (which still
+# points at the previous version until mise finishes) can't stamp the old version
+# into the service file.
 
 FROSTCLAW_DIR="${FROSTCLAW_DIR:-$HOME/projects/frostclaw}"
 GATEWAY_SVC="$HOME/.config/systemd/user/openclaw-gateway.service"
+
+# Resolve the openclaw binary from the freshly-installed version.
+# Fall back to PATH only if MISE_TOOL_INSTALL_PATH isn't set (manual runs).
+if [ -n "${MISE_TOOL_INSTALL_PATH:-}" ]; then
+  OPENCLAW_BIN="$MISE_TOOL_INSTALL_PATH/bin/openclaw"
+else
+  OPENCLAW_BIN="$(command -v openclaw)"
+fi
+
+if [ ! -x "$OPENCLAW_BIN" ]; then
+  echo "  ❌ openclaw binary not found at $OPENCLAW_BIN — aborting" >&2
+  exit 1
+fi
+
+echo "==> Using openclaw: $OPENCLAW_BIN"
 
 # Refresh the gateway systemd service so ExecStart points at the new version.
 if [ -f "$GATEWAY_SVC" ]; then
@@ -20,8 +40,9 @@ if [ -d "$FROSTCLAW_DIR" ]; then
   echo "==> Rebuilding frostclaw plugin..."
   cd "$FROSTCLAW_DIR"
 
-  # Update openclaw peer dependency to match new version
-  bun install 2>/dev/null || true
+  # openclaw dep is a file: link pointing at the mise `latest` symlink, so it
+  # always resolves to whatever mise just installed. bun install re-links it.
+  bun install
   bun run build
 
   echo "==> Frostclaw rebuilt successfully"
@@ -30,7 +51,10 @@ else
 fi
 
 if [ -f "$GATEWAY_SVC" ]; then
-  openclaw gateway install --force 2>/dev/null || echo "  ⚠️  openclaw gateway install failed"
+  "$OPENCLAW_BIN" gateway install --force || {
+    echo "  ❌ openclaw gateway install failed" >&2
+    exit 1
+  }
 
   systemctl --user daemon-reload 2>/dev/null || true
   systemctl --user start openclaw-gateway.service 2>/dev/null && \
