@@ -1,19 +1,16 @@
 {
   "name": "@local/snowflake-cortex",
   "version": "1.0.0",
-  "type": "module",
   "main": "dist/index.js",
-  "scripts": {
-    "build": "bun build ./index.ts --outfile ./dist/index.js --bundle --external 'openclaw'"
+  "devDependencies": {
+    "typescript": "^6.0.2"
   },
   "openclaw": {
     "extensions": ["./dist/index.js"],
     "providers": ["snowflake-cortex"]
   },
-  "dependencies": {
-    "openclaw": "file:/home/ubuntu/.local/share/mise/installs/npm-openclaw/latest/lib/node_modules/openclaw"
+  "scripts": {
+    "build": "bun build ./index.ts --outfile ./dist/index.js --bundle --external 'openclaw'"
   },
-  "devDependencies": {
-    "typescript": "^6.0.2"
-  }
+  "type": "module"
 }

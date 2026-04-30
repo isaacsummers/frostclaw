@@ -34,10 +34,20 @@ import type {
 // ---------------------------------------------------------------------------
 
 function getApiKey(): string {
-  return process.env.SNOWFLAKE_PAT ?? process.env.SNOWFLAKE_CORTEX_API_KEY ?? "";
+  return process.env.SNOWFLAKE_CORTEX_API_KEY ?? process.env.SNOWFLAKE_PAT ?? "";
 }
 function getBaseURL(): string {
   return process.env.SNOWFLAKE_BASE_URL ?? "";
+}
+
+// ---------------------------------------------------------------------------
+// Structured debug logger — writes to stderr, which OpenClaw captures into
+// its plugin log. Kept dependency-free and side-effect-only.
+// ---------------------------------------------------------------------------
+
+function log(event: string, data?: Record<string, unknown>): void {
+  const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
+  console.error(line);
 }
 
 function assertConfig(): void {
@@ -108,16 +118,47 @@ function fixTrailingAssistant(messages: unknown[]): unknown[] {
 }
 
 /**
- * Snowflake Cortex rejects text content blocks with empty or whitespace-only
- * text. Replace empty/whitespace strings with a zero-width space so the block
- * structure is preserved while satisfying the API constraint.
- * This handles the /new command case where OpenClaw sends a blank user turn.
+ * Snowflake Cortex rejects:
+ *   - text content blocks with empty or whitespace-only text
+ *   - messages with an empty content array (content: [])
+ *
+ * For empty text blocks: replace with a zero-width space to preserve structure.
+ * For empty content arrays: replace with a single zero-width-space text block.
+ *
+ * The empty-content-array case happens when an assistant turn fails mid-stream
+ * (the error placeholder turn has content: []) and gets included in the next
+ * request after session repair.
  */
 function fixEmptyTextBlocks(messages: unknown[]): unknown[] {
+  // Fast path: scan for any message that needs fixing before allocating.
+  // In well-formed sessions (the common case) this returns the original
+  // array reference with zero allocations.
+  let needsFix = false;
+  for (const msg of messages) {
+    if (!msg || typeof msg !== "object") continue;
+    const m = msg as Record<string, unknown>;
+    if (!Array.isArray(m.content)) continue;
+    if (m.content.length === 0) { needsFix = true; break; }
+    for (const block of m.content) {
+      if (!block || typeof block !== "object") continue;
+      const b = block as Record<string, unknown>;
+      if (b.type === "text" && typeof b.text === "string" && b.text.trim() === "") {
+        needsFix = true;
+        break;
+      }
+    }
+    if (needsFix) break;
+  }
+  if (!needsFix) return messages;
+
+  // Slow path: only reached when a bad block is found (error recovery cases).
   return messages.map((msg) => {
     if (!msg || typeof msg !== "object") return msg;
     const m = msg as Record<string, unknown>;
     if (!Array.isArray(m.content)) return msg;
+    if (m.content.length === 0) {
+      return { ...m, content: [{ type: "text", text: "\u200b" }] };
+    }
     const fixed = m.content.map((block: unknown) => {
       if (!block || typeof block !== "object") return block;
       const b = block as Record<string, unknown>;
@@ -190,6 +231,52 @@ function normalizeThinkingBudget(
     // Explicit budget path — overwrite budget_tokens with level-appropriate value.
     payload.thinking = { type: "enabled", budget_tokens: levelBudget(thinkingLevel) };
   }
+}
+
+/**
+ * Clamp `max_tokens` to a safe positive value.
+ *
+ * When conversation history is long, OpenClaw computes
+ * `max_tokens = contextWindow - usedTokens`, which can underflow to ≤ 0 and
+ * causes Snowflake Cortex to 400 the request. Anthropic also requires
+ * `max_tokens > thinking.budget_tokens`, so when thinking is enabled the
+ * floor must sit above the thinking budget by a comfortable margin for
+ * output tokens.
+ *
+ * Floors:
+ *   - no thinking        → 1024
+ *   - thinking "enabled" → budget_tokens + 1024
+ *   - thinking "adaptive"→ 4096 (Snowflake uses effort, no explicit budget)
+ */
+const MAX_TOKENS_FLOOR_NO_THINKING = 1024;
+const MAX_TOKENS_FLOOR_ADAPTIVE = 4096;
+const MAX_TOKENS_OUTPUT_HEADROOM = 1024;
+
+function clampMaxTokens(payload: Record<string, unknown>): void {
+  const current = payload.max_tokens;
+  if (typeof current !== "number") return;
+
+  const thinking = payload.thinking as Record<string, unknown> | undefined;
+  const thinkingType =
+    thinking && typeof thinking === "object" ? thinking.type : undefined;
+
+  let floor = MAX_TOKENS_FLOOR_NO_THINKING;
+  if (thinkingType === "enabled") {
+    const budget = thinking?.budget_tokens;
+    const budgetNum = typeof budget === "number" ? budget : 0;
+    floor = budgetNum + MAX_TOKENS_OUTPUT_HEADROOM;
+  } else if (thinkingType === "adaptive") {
+    floor = MAX_TOKENS_FLOOR_ADAPTIVE;
+  }
+
+  if (current >= floor) return;
+
+  log("clampMaxTokens", {
+    received: current,
+    clampedTo: floor,
+    thinkingType: thinkingType ?? "none",
+  });
+  payload.max_tokens = floor;
 }
 
 // ---------------------------------------------------------------------------
@@ -315,6 +402,12 @@ function buildClaudeModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
     id: spec.id,
     name: spec.name,
     api: "anthropic-messages" as ModelApi,
+    // baseUrl must be set per-model: pi-ai's getOpenRouterAttributionHeaders
+    // (pi-coding-agent/dist/core/sdk.js:31) does `model.baseUrl.includes(...)`
+    // without a null-check after the `provider !== "openrouter"` short-circuit,
+    // so an undefined baseUrl crashes every stream call with
+    // "Cannot read properties of undefined (reading 'includes')".
+    baseUrl: `${getBaseURL()}/api/v2/cortex/v1`,
     reasoning: spec.reasoning,
     input: spec.input,
     cost: claudeCost(spec.id),
@@ -338,6 +431,7 @@ function buildOpenAIModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
     id: spec.id,
     name: spec.name,
     api: "openai-completions" as ModelApi,
+    baseUrl: `${getBaseURL()}/api/v2/cortex/v1`,
     reasoning: spec.reasoning,
     input: spec.input,
     cost: openaiCost(spec.id),
@@ -370,6 +464,7 @@ function buildOpenSourceModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
     id: spec.id,
     name: spec.name,
     api: "openai-completions" as ModelApi,
+    baseUrl: `${getBaseURL()}/api/v2/cortex/v1`,
     reasoning: spec.reasoning,
     input: spec.input,
     cost: openSourceCost(spec.id),
@@ -389,6 +484,24 @@ function buildModelCatalog(): ModelDefinitionConfig[] {
     ...OPENAI_MODELS.map(buildOpenAIModelDef),
     ...OPEN_SOURCE_MODELS.map(buildOpenSourceModelDef),
   ];
+}
+
+/**
+ * Locate the full catalog entry for a model id (with or without the
+ * `snowflake-cortex/` provider prefix). Returns a complete ModelDefinitionConfig
+ * including cost, maxTokens, contextWindow, reasoning and compat — everything
+ * pi-ai's calculateCost and openclaw's max_tokens resolver need to see.
+ *
+ * Used by resolveDynamicModel so the dynamic-resolution path returns a
+ * fully-populated model instead of a minimal stub. OpenClaw's
+ * applyConfiguredProviderOverrides spreads the discoveredModel verbatim
+ * (see openclaw/dist/model-iYcWZTML.js:381), so fields we omit here are
+ * missing in the downstream pipeline — triggering `max_tokens: 0` payloads
+ * and `calculateCost: model.cost missing` warnings.
+ */
+function findCatalogEntry(modelId: string): ModelDefinitionConfig | undefined {
+  const bareId = modelId.replace(/^snowflake-cortex\//, "");
+  return buildModelCatalog().find((m) => m.id === bareId);
 }
 
 // ---------------------------------------------------------------------------
@@ -459,8 +572,12 @@ const snowflakeCortexEmbeddingAdapter: MemoryEmbeddingProviderAdapter = {
 
   async create(options: MemoryEmbeddingProviderCreateOptions) {
     const model = options.model || DEFAULT_SNOWFLAKE_EMBED_MODEL;
+    const hasKey = !!getApiKey();
+    const hasBaseUrl = !!getBaseURL();
+    log("embedding.create", { model, hasKey, hasBaseUrl });
 
-    if (!getApiKey() || !getBaseURL()) {
+    if (!hasKey || !hasBaseUrl) {
+      log("embedding.create returning null — missing config");
       return { provider: null };
     }
 
@@ -485,8 +602,10 @@ export default definePluginEntry({
     "behind PAT authentication.",
 
   register(api) {
-    api.registerMemoryEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
-    api.registerProvider({
+    try {
+      log("plugin registered — registering provider and embedding adapter");
+      api.registerMemoryEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
+      api.registerProvider({
       id: "snowflake-cortex",
       label: "Snowflake Cortex",
 
@@ -498,7 +617,7 @@ export default definePluginEntry({
           hint: "Programmatic Access Token for Snowflake Cortex",
           optionKey: "snowflakePat",
           flagName: "--snowflake-pat",
-          envVar: "SNOWFLAKE_PAT",
+          envVar: "SNOWFLAKE_CORTEX_API_KEY",
           promptMessage:
             "Enter your Snowflake Programmatic Access Token (PAT):",
         }),
@@ -506,20 +625,91 @@ export default definePluginEntry({
 
       catalog: {
         run: async (ctx) => {
-          const resolvedKey =
-            ctx.resolveProviderApiKey("snowflake-cortex").apiKey ?? getApiKey();
-          if (!resolvedKey || !getBaseURL()) return null;
+          try {
+            const resolved = ctx.resolveProviderApiKey("snowflake-cortex");
+            const resolvedKey = resolved.apiKey ?? getApiKey();
+            const envKey = getApiKey();
+            const baseURL = getBaseURL();
 
-          return {
-            provider: {
-              baseUrl: `${getBaseURL()}/api/v2/cortex/v1`,
-              apiKey: resolvedKey,
-              api: "openai-completions" as ModelApi,
-              authHeader: true,
-              models: buildModelCatalog(),
-            },
-          };
+            log("catalog.run", {
+              resolvedKeyPresent: !!resolved.apiKey,
+              resolvedKeyLength: resolved.apiKey?.length ?? 0,
+              envKeyPresent: !!envKey,
+              envKeyLength: envKey.length,
+              baseURL: baseURL || "(not set)",
+            });
+
+            if (!resolvedKey || !baseURL) {
+              log("catalog.run returning null — missing config", {
+                resolvedKey: !!resolvedKey,
+                baseURL: !!baseURL,
+              });
+              return null;
+            }
+
+            const models = buildModelCatalog();
+            log("catalog.run returning catalog", { modelCount: models.length });
+            return {
+              provider: {
+                baseUrl: `${baseURL}/api/v2/cortex/v1`,
+                apiKey: resolvedKey,
+                api: "openai-completions" as ModelApi,
+                authHeader: true,
+                models,
+              },
+            };
+          } catch (err) {
+            log("catalog.run ERROR", {
+              error: String(err),
+              stack: err instanceof Error ? err.stack : undefined,
+            });
+            throw err;
+          }
         },
+      },
+
+      // -----------------------------------------------------------------------
+      // Hook: Resolve model API family when catalog hasn't loaded yet.
+      //
+      // Returns the full catalog ModelDefinitionConfig when we recognize the
+      // model id. This is important: openclaw's applyConfiguredProviderOverrides
+      // (model-iYcWZTML.js:380-394) spreads the discoveredModel and pulls
+      // `cost`, `maxTokens`, `contextWindow`, `reasoning`, `compat` directly
+      // from it — fields we omit here simply never reach the downstream
+      // pipeline, causing pi-ai's calculateCost to warn `model.cost missing`
+      // and openclaw's resolveAnthropicMessagesMaxTokens to emit `max_tokens: 0`.
+      //
+      // For unknown ids we fall back to a minimal stub so the request doesn't
+      // crash: openclaw's provider-stream reads `model.input.includes(...)`
+      // and pi-ai's sdk reads `model.baseUrl.includes(...)` unconditionally.
+      // Claude models support text + image; other unknown ids default to
+      // text-only since dropping images is safer than crashing.
+      // -----------------------------------------------------------------------
+      resolveDynamicModel(ctx) {
+        const modelId = ctx.modelId;
+        if (!modelId) {
+          log("resolveDynamicModel: no modelId");
+          return null;
+        }
+
+        const catalogEntry = findCatalogEntry(modelId);
+        if (catalogEntry) {
+          log("resolveDynamicModel (catalog hit)", {
+            modelId,
+            api: catalogEntry.api,
+            contextWindow: catalogEntry.contextWindow,
+            maxTokens: catalogEntry.maxTokens,
+            hasCost: !!catalogEntry.cost,
+          });
+          return catalogEntry;
+        }
+
+        const claude = isClaudeModel(modelId);
+        const api: ModelApi = claude ? "anthropic-messages" : "openai-completions";
+        const input: Array<"text" | "image"> = claude ? ["text", "image"] : ["text"];
+        const baseUrl = `${getBaseURL()}/api/v2/cortex/v1`;
+        log("resolveDynamicModel (unknown id, minimal stub)", { modelId, api, input, baseUrl });
+        return { id: modelId, name: modelId, api, input, baseUrl };
       },
 
       // -----------------------------------------------------------------------
@@ -542,6 +732,12 @@ export default definePluginEntry({
       // prevents Snowflake Cortex from rejecting unknown beta flags with 400.
       // -----------------------------------------------------------------------
       wrapStreamFn(ctx: ProviderWrapStreamFnContext) {
+        log("wrapStreamFn", {
+          modelId: (ctx as unknown as Record<string, unknown>).modelId as string | undefined,
+          thinkingLevel: ctx.thinkingLevel,
+          thinkingActive: ctx.thinkingLevel !== undefined && ctx.thinkingLevel !== "off",
+          hasStreamFn: !!ctx.streamFn,
+        });
         if (!ctx.streamFn) return undefined;
 
         const inner = ctx.streamFn;
@@ -555,49 +751,173 @@ export default definePluginEntry({
         const thinkingLevel = ctx.thinkingLevel;
 
         return (model, context, options) => {
-          const originalOnPayload = options?.onPayload;
+          try {
+            // Guard: two known openclaw/pi-ai sites dereference model fields
+            // unconditionally and crash on undefined:
+            //   1. provider-stream-CQzDRxyR.js:154 reads model.input.includes(...)
+            //   2. pi-coding-agent/dist/core/sdk.js:31 reads model.baseUrl.includes(...)
+            //      after `provider !== "openrouter"` (no short-circuit on baseUrl).
+            // Patch both if missing so the downstream pipeline never sees an
+            // illegal state.
+            const modelObj = model as {
+              id?: unknown;
+              api?: unknown;
+              input?: unknown;
+              baseUrl?: unknown;
+            } | undefined;
+            if (modelObj && !Array.isArray(modelObj.input)) {
+              const id = String(modelObj.id ?? "");
+              const inferred: Array<"text" | "image"> = isClaudeModel(id)
+                ? ["text", "image"]
+                : ["text"];
+              log("wrapStreamFn.inner: patching missing input", {
+                modelId: id,
+                inferred,
+                priorInput: modelObj.input,
+                keys: Object.keys(modelObj as Record<string, unknown>),
+              });
+              (modelObj as Record<string, unknown>).input = inferred;
+            }
+            if (modelObj && typeof modelObj.baseUrl !== "string") {
+              const fallbackBaseUrl = `${getBaseURL()}/api/v2/cortex/v1`;
+              log("wrapStreamFn.inner: patching missing baseUrl", {
+                modelId: String(modelObj.id ?? ""),
+                fallbackBaseUrl,
+                priorBaseUrl: modelObj.baseUrl,
+              });
+              (modelObj as Record<string, unknown>).baseUrl = fallbackBaseUrl;
+            }
+            log("wrapStreamFn.inner", {
+              modelId: modelObj?.id,
+              modelApi: modelObj?.api,
+              modelInput: modelObj?.input,
+              modelBaseUrl: modelObj?.baseUrl,
+              modelKeys: modelObj
+                ? Object.keys(modelObj as Record<string, unknown>)
+                : undefined,
+              hasContext: !!context,
+              hasOptions: !!options,
+              messageCount: Array.isArray((context as Record<string, unknown> | undefined)?.messages)
+                ? ((context as Record<string, unknown>).messages as unknown[]).length
+                : undefined,
+            });
+            const originalOnPayload = options?.onPayload;
 
-          // Build per-request anthropic-beta header: start with any
-          // catalog-level flags from the model definition, then append
-          // thinking flags when the request actually uses thinking.
-          const catalogBeta =
-            (model as { headers?: Record<string, string> })?.headers?.[
-              "anthropic-beta"
-            ] ?? "";
-          const betaFlags = catalogBeta ? [catalogBeta] : [];
-          if (thinkingActive) {
-            betaFlags.push(BETA_THINKING.join(","));
-          }
+            // Build per-request anthropic-beta header: start with any
+            // catalog-level flags from the model definition, then append
+            // thinking flags when the request actually uses thinking.
+            const catalogBeta =
+              (model as { headers?: Record<string, string> })?.headers?.[
+                "anthropic-beta"
+              ] ?? "";
+            const betaFlags = catalogBeta ? [catalogBeta] : [];
+            if (thinkingActive) {
+              betaFlags.push(BETA_THINKING.join(","));
+            }
 
-          const merged = {
-            ...options,
-            headers: {
-              ...options?.headers,
-              "X-Snowflake-Authorization-Token-Type":
-                "PROGRAMMATIC_ACCESS_TOKEN",
-              ...(betaFlags.length > 0
-                ? { "anthropic-beta": betaFlags.join(",") }
-                : {}),
-            },
-            onPayload: (payload: unknown, payloadModel: unknown) => {
-              if (
-                payload &&
-                typeof payload === "object" &&
-                isClaudeModel(String((model as { id?: unknown })?.id ?? ""))
-              ) {
-                const record = payload as Record<string, unknown>;
-                if (Array.isArray(record.messages)) {
-                  record.messages = fixTrailingAssistant(record.messages);
-                  record.messages = fixEmptyTextBlocks(record.messages);
+            // Snowflake Cortex requires `Authorization: Bearer <PAT>` for
+            // every request, including its Anthropic-Messages endpoint. The
+            // SDK's Anthropic transport (provider-stream:335) instead sends
+            // `x-api-key: <key>`, which Snowflake rejects with
+            //   400 Bearer token is missing
+            // So for Claude models we must attach the Bearer header ourselves.
+            // Non-Claude (openai-completions) routes already get Bearer from
+            // the SDK's default flow and need no patching here.
+            const modelId = String((model as { id?: unknown })?.id ?? "");
+            const isClaudeRoute = isClaudeModel(modelId);
+            const optionsApiKey =
+              (options as { apiKey?: unknown } | undefined)?.apiKey;
+            const bearerKey =
+              typeof optionsApiKey === "string" && optionsApiKey.length > 0
+                ? optionsApiKey
+                : getApiKey();
+            const authHeader =
+              isClaudeRoute && bearerKey
+                ? { Authorization: `Bearer ${bearerKey}` }
+                : {};
+
+            const merged = {
+              ...options,
+              headers: {
+                ...options?.headers,
+                "X-Snowflake-Authorization-Token-Type":
+                  "PROGRAMMATIC_ACCESS_TOKEN",
+                ...authHeader,
+                ...(betaFlags.length > 0
+                  ? { "anthropic-beta": betaFlags.join(",") }
+                  : {}),
+              },
+              onPayload: (payload: unknown, payloadModel: unknown) => {
+                const payloadModelObj = payloadModel as { id?: unknown } | undefined;
+                log("onPayload", {
+                  payloadType: typeof payload,
+                  isObject: payload !== null && typeof payload === "object",
+                  payloadModelId: payloadModelObj?.id,
+                  isClaudeModelResult: payload && typeof payload === "object"
+                    ? isClaudeModel(String((model as { id?: unknown })?.id ?? ""))
+                    : false,
+                });
+                if (
+                  payload &&
+                  typeof payload === "object" &&
+                  isClaudeModel(String((model as { id?: unknown })?.id ?? ""))
+                ) {
+                  const record = payload as Record<string, unknown>;
+                  if (Array.isArray(record.messages)) {
+                    record.messages = fixTrailingAssistant(record.messages);
+                    record.messages = fixEmptyTextBlocks(record.messages);
+                  }
+                  normalizeThinkingBudget(record, thinkingLevel);
+                  clampMaxTokens(record);
                 }
-                normalizeThinkingBudget(record, thinkingLevel);
-              }
-              return (originalOnPayload as
-                | ((p: unknown, m: unknown) => unknown)
-                | undefined)?.(payload, payloadModel);
-            },
-          };
-          return inner(model, context, merged as typeof options);
+                return (originalOnPayload as
+                  | ((p: unknown, m: unknown) => unknown)
+                  | undefined)?.(payload, payloadModel);
+              },
+            };
+            const streamResult = inner(model, context, merged as typeof options);
+            // The openclaw runtime may invoke streamFn as streamSimple, which
+            // returns a Promise. Wrap to observe rejection so we can capture
+            // the stack trace for the "Cannot read properties of undefined"
+            // crash that otherwise surfaces only as opaque text.
+            if (
+              streamResult &&
+              typeof (streamResult as { then?: unknown }).then === "function"
+            ) {
+              return (streamResult as Promise<unknown>).then(
+                (value) => {
+                  const valueObj = value as
+                    | { errorMessage?: unknown; stopReason?: unknown; content?: unknown }
+                    | undefined;
+                  if (
+                    valueObj &&
+                    typeof valueObj === "object" &&
+                    (valueObj.errorMessage || valueObj.stopReason === "error")
+                  ) {
+                    log("wrapStreamFn.promise resolved with error", {
+                      errorMessage: valueObj.errorMessage,
+                      stopReason: valueObj.stopReason,
+                    });
+                  }
+                  return value;
+                },
+                (err) => {
+                  log("wrapStreamFn.promise REJECTED", {
+                    error: String(err),
+                    stack: err instanceof Error ? err.stack : undefined,
+                  });
+                  throw err;
+                },
+              ) as typeof streamResult;
+            }
+            return streamResult;
+          } catch (err) {
+            log("wrapStreamFn.inner ERROR", {
+              error: String(err),
+              stack: err instanceof Error ? err.stack : undefined,
+            });
+            throw err;
+          }
         };
       },
 
@@ -632,5 +952,12 @@ export default definePluginEntry({
         return null;
       },
     });
+    } catch (err) {
+      log("register ERROR", {
+        error: String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
+      throw err;
+    }
   },
 });

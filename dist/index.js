@@ -5,10 +5,14 @@ import {
 import { resolveClaudeThinkingProfile } from "openclaw/plugin-sdk/provider-model-shared";
 import { createProviderApiKeyAuthMethod } from "openclaw/plugin-sdk/provider-auth-api-key";
 function getApiKey() {
-  return process.env.SNOWFLAKE_PAT ?? process.env.SNOWFLAKE_CORTEX_API_KEY ?? "";
+  return process.env.SNOWFLAKE_CORTEX_API_KEY ?? process.env.SNOWFLAKE_PAT ?? "";
 }
 function getBaseURL() {
   return process.env.SNOWFLAKE_BASE_URL ?? "";
+}
+function log(event, data) {
+  const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
+  console.error(line);
 }
 var BETA_ALWAYS = [
   "output-128k-2025-02-19",
@@ -28,12 +32,40 @@ function fixTrailingAssistant(messages) {
   return messages.slice(0, -1);
 }
 function fixEmptyTextBlocks(messages) {
+  let needsFix = false;
+  for (const msg of messages) {
+    if (!msg || typeof msg !== "object")
+      continue;
+    const m = msg;
+    if (!Array.isArray(m.content))
+      continue;
+    if (m.content.length === 0) {
+      needsFix = true;
+      break;
+    }
+    for (const block of m.content) {
+      if (!block || typeof block !== "object")
+        continue;
+      const b = block;
+      if (b.type === "text" && typeof b.text === "string" && b.text.trim() === "") {
+        needsFix = true;
+        break;
+      }
+    }
+    if (needsFix)
+      break;
+  }
+  if (!needsFix)
+    return messages;
   return messages.map((msg) => {
     if (!msg || typeof msg !== "object")
       return msg;
     const m = msg;
     if (!Array.isArray(m.content))
       return msg;
+    if (m.content.length === 0) {
+      return { ...m, content: [{ type: "text", text: "​" }] };
+    }
     const fixed = m.content.map((block) => {
       if (!block || typeof block !== "object")
         return block;
@@ -89,6 +121,32 @@ function normalizeThinkingBudget(payload, thinkingLevel) {
   if (t.type === "enabled") {
     payload.thinking = { type: "enabled", budget_tokens: levelBudget(thinkingLevel) };
   }
+}
+var MAX_TOKENS_FLOOR_NO_THINKING = 1024;
+var MAX_TOKENS_FLOOR_ADAPTIVE = 4096;
+var MAX_TOKENS_OUTPUT_HEADROOM = 1024;
+function clampMaxTokens(payload) {
+  const current = payload.max_tokens;
+  if (typeof current !== "number")
+    return;
+  const thinking = payload.thinking;
+  const thinkingType = thinking && typeof thinking === "object" ? thinking.type : undefined;
+  let floor = MAX_TOKENS_FLOOR_NO_THINKING;
+  if (thinkingType === "enabled") {
+    const budget = thinking?.budget_tokens;
+    const budgetNum = typeof budget === "number" ? budget : 0;
+    floor = budgetNum + MAX_TOKENS_OUTPUT_HEADROOM;
+  } else if (thinkingType === "adaptive") {
+    floor = MAX_TOKENS_FLOOR_ADAPTIVE;
+  }
+  if (current >= floor)
+    return;
+  log("clampMaxTokens", {
+    received: current,
+    clampedTo: floor,
+    thinkingType: thinkingType ?? "none"
+  });
+  payload.max_tokens = floor;
 }
 function isClaudeModel(modelId) {
   return modelId.toLowerCase().startsWith("claude");
@@ -156,6 +214,7 @@ function buildClaudeModelDef(spec) {
     id: spec.id,
     name: spec.name,
     api: "anthropic-messages",
+    baseUrl: `${getBaseURL()}/api/v2/cortex/v1`,
     reasoning: spec.reasoning,
     input: spec.input,
     cost: claudeCost(spec.id),
@@ -179,6 +238,7 @@ function buildOpenAIModelDef(spec) {
     id: spec.id,
     name: spec.name,
     api: "openai-completions",
+    baseUrl: `${getBaseURL()}/api/v2/cortex/v1`,
     reasoning: spec.reasoning,
     input: spec.input,
     cost: openaiCost(spec.id),
@@ -217,6 +277,7 @@ function buildOpenSourceModelDef(spec) {
     id: spec.id,
     name: spec.name,
     api: "openai-completions",
+    baseUrl: `${getBaseURL()}/api/v2/cortex/v1`,
     reasoning: spec.reasoning,
     input: spec.input,
     cost: openSourceCost(spec.id),
@@ -235,6 +296,10 @@ function buildModelCatalog() {
     ...OPENAI_MODELS.map(buildOpenAIModelDef),
     ...OPEN_SOURCE_MODELS.map(buildOpenSourceModelDef)
   ];
+}
+function findCatalogEntry(modelId) {
+  const bareId = modelId.replace(/^snowflake-cortex\//, "");
+  return buildModelCatalog().find((m) => m.id === bareId);
 }
 var DEFAULT_SNOWFLAKE_EMBED_MODEL = "snowflake-arctic-embed-m-v1.5";
 async function snowflakeEmbed(texts, model) {
@@ -268,7 +333,11 @@ var snowflakeCortexEmbeddingAdapter = {
   autoSelectPriority: -1,
   async create(options) {
     const model = options.model || DEFAULT_SNOWFLAKE_EMBED_MODEL;
-    if (!getApiKey() || !getBaseURL()) {
+    const hasKey = !!getApiKey();
+    const hasBaseUrl = !!getBaseURL();
+    log("embedding.create", { model, hasKey, hasBaseUrl });
+    if (!hasKey || !hasBaseUrl) {
+      log("embedding.create returning null — missing config");
       return { provider: null };
     }
     return {
@@ -287,103 +356,239 @@ var frostclaw_default = definePluginEntry({
   name: "Snowflake Cortex",
   description: "Snowflake Cortex AI — routes Claude models to Anthropic Messages API " + "and all other models to OpenAI-compatible Chat Completions, both " + "behind PAT authentication.",
   register(api) {
-    api.registerMemoryEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
-    api.registerProvider({
-      id: "snowflake-cortex",
-      label: "Snowflake Cortex",
-      auth: [
-        createProviderApiKeyAuthMethod({
-          providerId: "snowflake-cortex",
-          methodId: "snowflake-pat",
-          label: "Snowflake PAT",
-          hint: "Programmatic Access Token for Snowflake Cortex",
-          optionKey: "snowflakePat",
-          flagName: "--snowflake-pat",
-          envVar: "SNOWFLAKE_PAT",
-          promptMessage: "Enter your Snowflake Programmatic Access Token (PAT):"
-        })
-      ],
-      catalog: {
-        run: async (ctx) => {
-          const resolvedKey = ctx.resolveProviderApiKey("snowflake-cortex").apiKey ?? getApiKey();
-          if (!resolvedKey || !getBaseURL())
-            return null;
-          return {
-            provider: {
-              baseUrl: `${getBaseURL()}/api/v2/cortex/v1`,
-              apiKey: resolvedKey,
-              api: "openai-completions",
-              authHeader: true,
-              models: buildModelCatalog()
-            }
-          };
-        }
-      },
-      normalizeToolSchemas(ctx) {
-        if (!ctx.modelId)
-          return ctx.tools;
-        if (isClaudeModel(ctx.modelId))
-          return ctx.tools;
-        if (!modelSupportsTools(ctx.modelId))
-          return [];
-        return ctx.tools;
-      },
-      wrapStreamFn(ctx) {
-        if (!ctx.streamFn)
-          return;
-        const inner = ctx.streamFn;
-        const thinkingActive = ctx.thinkingLevel !== undefined && ctx.thinkingLevel !== "off";
-        const thinkingLevel = ctx.thinkingLevel;
-        return (model, context, options) => {
-          const originalOnPayload = options?.onPayload;
-          const catalogBeta = model?.headers?.["anthropic-beta"] ?? "";
-          const betaFlags = catalogBeta ? [catalogBeta] : [];
-          if (thinkingActive) {
-            betaFlags.push(BETA_THINKING.join(","));
-          }
-          const merged = {
-            ...options,
-            headers: {
-              ...options?.headers,
-              "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN",
-              ...betaFlags.length > 0 ? { "anthropic-beta": betaFlags.join(",") } : {}
-            },
-            onPayload: (payload, payloadModel) => {
-              if (payload && typeof payload === "object" && isClaudeModel(String(model?.id ?? ""))) {
-                const record = payload;
-                if (Array.isArray(record.messages)) {
-                  record.messages = fixTrailingAssistant(record.messages);
-                  record.messages = fixEmptyTextBlocks(record.messages);
-                }
-                normalizeThinkingBudget(record, thinkingLevel);
+    try {
+      log("plugin registered — registering provider and embedding adapter");
+      api.registerMemoryEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
+      api.registerProvider({
+        id: "snowflake-cortex",
+        label: "Snowflake Cortex",
+        auth: [
+          createProviderApiKeyAuthMethod({
+            providerId: "snowflake-cortex",
+            methodId: "snowflake-pat",
+            label: "Snowflake PAT",
+            hint: "Programmatic Access Token for Snowflake Cortex",
+            optionKey: "snowflakePat",
+            flagName: "--snowflake-pat",
+            envVar: "SNOWFLAKE_CORTEX_API_KEY",
+            promptMessage: "Enter your Snowflake Programmatic Access Token (PAT):"
+          })
+        ],
+        catalog: {
+          run: async (ctx) => {
+            try {
+              const resolved = ctx.resolveProviderApiKey("snowflake-cortex");
+              const resolvedKey = resolved.apiKey ?? getApiKey();
+              const envKey = getApiKey();
+              const baseURL = getBaseURL();
+              log("catalog.run", {
+                resolvedKeyPresent: !!resolved.apiKey,
+                resolvedKeyLength: resolved.apiKey?.length ?? 0,
+                envKeyPresent: !!envKey,
+                envKeyLength: envKey.length,
+                baseURL: baseURL || "(not set)"
+              });
+              if (!resolvedKey || !baseURL) {
+                log("catalog.run returning null — missing config", {
+                  resolvedKey: !!resolvedKey,
+                  baseURL: !!baseURL
+                });
+                return null;
               }
-              return originalOnPayload?.(payload, payloadModel);
+              const models = buildModelCatalog();
+              log("catalog.run returning catalog", { modelCount: models.length });
+              return {
+                provider: {
+                  baseUrl: `${baseURL}/api/v2/cortex/v1`,
+                  apiKey: resolvedKey,
+                  api: "openai-completions",
+                  authHeader: true,
+                  models
+                }
+              };
+            } catch (err) {
+              log("catalog.run ERROR", {
+                error: String(err),
+                stack: err instanceof Error ? err.stack : undefined
+              });
+              throw err;
+            }
+          }
+        },
+        resolveDynamicModel(ctx) {
+          const modelId = ctx.modelId;
+          if (!modelId) {
+            log("resolveDynamicModel: no modelId");
+            return null;
+          }
+          const catalogEntry = findCatalogEntry(modelId);
+          if (catalogEntry) {
+            log("resolveDynamicModel (catalog hit)", {
+              modelId,
+              api: catalogEntry.api,
+              contextWindow: catalogEntry.contextWindow,
+              maxTokens: catalogEntry.maxTokens,
+              hasCost: !!catalogEntry.cost
+            });
+            return catalogEntry;
+          }
+          const claude = isClaudeModel(modelId);
+          const api2 = claude ? "anthropic-messages" : "openai-completions";
+          const input = claude ? ["text", "image"] : ["text"];
+          const baseUrl = `${getBaseURL()}/api/v2/cortex/v1`;
+          log("resolveDynamicModel (unknown id, minimal stub)", { modelId, api: api2, input, baseUrl });
+          return { id: modelId, name: modelId, api: api2, input, baseUrl };
+        },
+        normalizeToolSchemas(ctx) {
+          if (!ctx.modelId)
+            return ctx.tools;
+          if (isClaudeModel(ctx.modelId))
+            return ctx.tools;
+          if (!modelSupportsTools(ctx.modelId))
+            return [];
+          return ctx.tools;
+        },
+        wrapStreamFn(ctx) {
+          log("wrapStreamFn", {
+            modelId: ctx.modelId,
+            thinkingLevel: ctx.thinkingLevel,
+            thinkingActive: ctx.thinkingLevel !== undefined && ctx.thinkingLevel !== "off",
+            hasStreamFn: !!ctx.streamFn
+          });
+          if (!ctx.streamFn)
+            return;
+          const inner = ctx.streamFn;
+          const thinkingActive = ctx.thinkingLevel !== undefined && ctx.thinkingLevel !== "off";
+          const thinkingLevel = ctx.thinkingLevel;
+          return (model, context, options) => {
+            try {
+              const modelObj = model;
+              if (modelObj && !Array.isArray(modelObj.input)) {
+                const id = String(modelObj.id ?? "");
+                const inferred = isClaudeModel(id) ? ["text", "image"] : ["text"];
+                log("wrapStreamFn.inner: patching missing input", {
+                  modelId: id,
+                  inferred,
+                  priorInput: modelObj.input,
+                  keys: Object.keys(modelObj)
+                });
+                modelObj.input = inferred;
+              }
+              if (modelObj && typeof modelObj.baseUrl !== "string") {
+                const fallbackBaseUrl = `${getBaseURL()}/api/v2/cortex/v1`;
+                log("wrapStreamFn.inner: patching missing baseUrl", {
+                  modelId: String(modelObj.id ?? ""),
+                  fallbackBaseUrl,
+                  priorBaseUrl: modelObj.baseUrl
+                });
+                modelObj.baseUrl = fallbackBaseUrl;
+              }
+              log("wrapStreamFn.inner", {
+                modelId: modelObj?.id,
+                modelApi: modelObj?.api,
+                modelInput: modelObj?.input,
+                modelBaseUrl: modelObj?.baseUrl,
+                modelKeys: modelObj ? Object.keys(modelObj) : undefined,
+                hasContext: !!context,
+                hasOptions: !!options,
+                messageCount: Array.isArray(context?.messages) ? context.messages.length : undefined
+              });
+              const originalOnPayload = options?.onPayload;
+              const catalogBeta = model?.headers?.["anthropic-beta"] ?? "";
+              const betaFlags = catalogBeta ? [catalogBeta] : [];
+              if (thinkingActive) {
+                betaFlags.push(BETA_THINKING.join(","));
+              }
+              const modelId = String(model?.id ?? "");
+              const isClaudeRoute = isClaudeModel(modelId);
+              const optionsApiKey = options?.apiKey;
+              const bearerKey = typeof optionsApiKey === "string" && optionsApiKey.length > 0 ? optionsApiKey : getApiKey();
+              const authHeader = isClaudeRoute && bearerKey ? { Authorization: `Bearer ${bearerKey}` } : {};
+              const merged = {
+                ...options,
+                headers: {
+                  ...options?.headers,
+                  "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN",
+                  ...authHeader,
+                  ...betaFlags.length > 0 ? { "anthropic-beta": betaFlags.join(",") } : {}
+                },
+                onPayload: (payload, payloadModel) => {
+                  const payloadModelObj = payloadModel;
+                  log("onPayload", {
+                    payloadType: typeof payload,
+                    isObject: payload !== null && typeof payload === "object",
+                    payloadModelId: payloadModelObj?.id,
+                    isClaudeModelResult: payload && typeof payload === "object" ? isClaudeModel(String(model?.id ?? "")) : false
+                  });
+                  if (payload && typeof payload === "object" && isClaudeModel(String(model?.id ?? ""))) {
+                    const record = payload;
+                    if (Array.isArray(record.messages)) {
+                      record.messages = fixTrailingAssistant(record.messages);
+                      record.messages = fixEmptyTextBlocks(record.messages);
+                    }
+                    normalizeThinkingBudget(record, thinkingLevel);
+                    clampMaxTokens(record);
+                  }
+                  return originalOnPayload?.(payload, payloadModel);
+                }
+              };
+              const streamResult = inner(model, context, merged);
+              if (streamResult && typeof streamResult.then === "function") {
+                return streamResult.then((value) => {
+                  const valueObj = value;
+                  if (valueObj && typeof valueObj === "object" && (valueObj.errorMessage || valueObj.stopReason === "error")) {
+                    log("wrapStreamFn.promise resolved with error", {
+                      errorMessage: valueObj.errorMessage,
+                      stopReason: valueObj.stopReason
+                    });
+                  }
+                  return value;
+                }, (err) => {
+                  log("wrapStreamFn.promise REJECTED", {
+                    error: String(err),
+                    stack: err instanceof Error ? err.stack : undefined
+                  });
+                  throw err;
+                });
+              }
+              return streamResult;
+            } catch (err) {
+              log("wrapStreamFn.inner ERROR", {
+                error: String(err),
+                stack: err instanceof Error ? err.stack : undefined
+              });
+              throw err;
             }
           };
-          return inner(model, context, merged);
-        };
-      },
-      resolveThinkingProfile(ctx) {
-        if (!ctx.modelId)
+        },
+        resolveThinkingProfile(ctx) {
+          if (!ctx.modelId)
+            return null;
+          if (!isClaudeModel(ctx.modelId))
+            return null;
+          const bareId = ctx.modelId.replace(/^snowflake-cortex\//, "");
+          return resolveClaudeThinkingProfile(bareId) ?? null;
+        },
+        buildReplayPolicy(ctx) {
+          if (!ctx.modelId)
+            return null;
+          if (isClaudeModel(ctx.modelId)) {
+            return {
+              repairToolUseResultPairing: true,
+              allowSyntheticToolResults: true,
+              validateAnthropicTurns: true
+            };
+          }
           return null;
-        if (!isClaudeModel(ctx.modelId))
-          return null;
-        const bareId = ctx.modelId.replace(/^snowflake-cortex\//, "");
-        return resolveClaudeThinkingProfile(bareId) ?? null;
-      },
-      buildReplayPolicy(ctx) {
-        if (!ctx.modelId)
-          return null;
-        if (isClaudeModel(ctx.modelId)) {
-          return {
-            repairToolUseResultPairing: true,
-            allowSyntheticToolResults: true,
-            validateAnthropicTurns: true
-          };
         }
-        return null;
-      }
-    });
+      });
+    } catch (err) {
+      log("register ERROR", {
+        error: String(err),
+        stack: err instanceof Error ? err.stack : undefined
+      });
+      throw err;
+    }
   }
 });
 export {
