@@ -10,7 +10,20 @@ function getApiKey() {
 function getBaseURL() {
   return process.env.SNOWFLAKE_BASE_URL ?? "";
 }
+var DEBUG_ENABLED = (() => {
+  const v = process.env.FROSTCLAW_DEBUG;
+  if (!v)
+    return false;
+  const s = v.toLowerCase();
+  return s !== "0" && s !== "false" && s !== "off" && s !== "";
+})();
 function log(event, data) {
+  if (!DEBUG_ENABLED)
+    return;
+  const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
+  console.error(line);
+}
+function logError(event, data) {
   const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
   console.error(line);
 }
@@ -290,16 +303,27 @@ function buildOpenSourceModelDef(spec) {
     }
   };
 }
+var CATALOG_CACHE;
+var CATALOG_INDEX;
 function buildModelCatalog() {
-  return [
+  const baseURL = getBaseURL();
+  if (CATALOG_CACHE && CATALOG_CACHE.baseURL === baseURL) {
+    return CATALOG_CACHE.catalog;
+  }
+  const catalog = [
     ...CLAUDE_MODELS.map(buildClaudeModelDef),
     ...OPENAI_MODELS.map(buildOpenAIModelDef),
     ...OPEN_SOURCE_MODELS.map(buildOpenSourceModelDef)
   ];
+  CATALOG_CACHE = { baseURL, catalog };
+  CATALOG_INDEX = new Map(catalog.map((m) => [m.id, m]));
+  return catalog;
 }
 function findCatalogEntry(modelId) {
   const bareId = modelId.replace(/^snowflake-cortex\//, "");
-  return buildModelCatalog().find((m) => m.id === bareId);
+  if (!CATALOG_INDEX)
+    buildModelCatalog();
+  return CATALOG_INDEX?.get(bareId);
 }
 var DEFAULT_SNOWFLAKE_EMBED_MODEL = "snowflake-arctic-embed-m-v1.5";
 async function snowflakeEmbed(texts, model) {
@@ -357,7 +381,7 @@ var frostclaw_default = definePluginEntry({
   description: "Snowflake Cortex AI — routes Claude models to Anthropic Messages API " + "and all other models to OpenAI-compatible Chat Completions, both " + "behind PAT authentication.",
   register(api) {
     try {
-      log("plugin registered — registering provider and embedding adapter");
+      log("plugin registered");
       api.registerMemoryEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
       api.registerProvider({
         id: "snowflake-cortex",
@@ -407,7 +431,7 @@ var frostclaw_default = definePluginEntry({
                 }
               };
             } catch (err) {
-              log("catalog.run ERROR", {
+              logError("catalog.run ERROR", {
                 error: String(err),
                 stack: err instanceof Error ? err.stack : undefined
               });
@@ -544,7 +568,7 @@ var frostclaw_default = definePluginEntry({
                   }
                   return value;
                 }, (err) => {
-                  log("wrapStreamFn.promise REJECTED", {
+                  logError("wrapStreamFn.promise REJECTED", {
                     error: String(err),
                     stack: err instanceof Error ? err.stack : undefined
                   });
@@ -553,7 +577,7 @@ var frostclaw_default = definePluginEntry({
               }
               return streamResult;
             } catch (err) {
-              log("wrapStreamFn.inner ERROR", {
+              logError("wrapStreamFn.inner ERROR", {
                 error: String(err),
                 stack: err instanceof Error ? err.stack : undefined
               });
@@ -583,7 +607,7 @@ var frostclaw_default = definePluginEntry({
         }
       });
     } catch (err) {
-      log("register ERROR", {
+      logError("register ERROR", {
         error: String(err),
         stack: err instanceof Error ? err.stack : undefined
       });

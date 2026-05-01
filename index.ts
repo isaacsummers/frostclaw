@@ -45,7 +45,25 @@ function getBaseURL(): string {
 // its plugin log. Kept dependency-free and side-effect-only.
 // ---------------------------------------------------------------------------
 
+// Debug logging is gated behind FROSTCLAW_DEBUG because every call here
+// goes through synchronous console.error -> stderr -> journald, which blocks
+// the event loop on hot paths (wrapStreamFn, onPayload, resolveDynamicModel
+// fire many times per request). Error-path logging (log.error) stays
+// unconditional so we never silently lose failure signals.
+const DEBUG_ENABLED: boolean = ((): boolean => {
+  const v = process.env.FROSTCLAW_DEBUG;
+  if (!v) return false;
+  const s = v.toLowerCase();
+  return s !== "0" && s !== "false" && s !== "off" && s !== "";
+})();
+
 function log(event: string, data?: Record<string, unknown>): void {
+  if (!DEBUG_ENABLED) return;
+  const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
+  console.error(line);
+}
+
+function logError(event: string, data?: Record<string, unknown>): void {
   const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
   console.error(line);
 }
@@ -478,12 +496,27 @@ function buildOpenSourceModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
   };
 }
 
+// Memoize the catalog so we don't rebuild the full model list (22 specs ->
+// full definitions with fresh cost/header allocations) on every request.
+// The catalog depends on SNOWFLAKE_BASE_URL via buildClaudeModelDef ->
+// getBaseURL(), so we key the cache on the current base URL and rebuild
+// only when it changes (effectively never during a gateway run).
+let CATALOG_CACHE: { baseURL: string; catalog: ModelDefinitionConfig[] } | undefined;
+let CATALOG_INDEX: Map<string, ModelDefinitionConfig> | undefined;
+
 function buildModelCatalog(): ModelDefinitionConfig[] {
-  return [
+  const baseURL = getBaseURL();
+  if (CATALOG_CACHE && CATALOG_CACHE.baseURL === baseURL) {
+    return CATALOG_CACHE.catalog;
+  }
+  const catalog: ModelDefinitionConfig[] = [
     ...CLAUDE_MODELS.map(buildClaudeModelDef),
     ...OPENAI_MODELS.map(buildOpenAIModelDef),
     ...OPEN_SOURCE_MODELS.map(buildOpenSourceModelDef),
   ];
+  CATALOG_CACHE = { baseURL, catalog };
+  CATALOG_INDEX = new Map(catalog.map((m) => [m.id, m]));
+  return catalog;
 }
 
 /**
@@ -501,7 +534,9 @@ function buildModelCatalog(): ModelDefinitionConfig[] {
  */
 function findCatalogEntry(modelId: string): ModelDefinitionConfig | undefined {
   const bareId = modelId.replace(/^snowflake-cortex\//, "");
-  return buildModelCatalog().find((m) => m.id === bareId);
+  // Ensure catalog (and its index) are built; index lookup is O(1) vs O(n).
+  if (!CATALOG_INDEX) buildModelCatalog();
+  return CATALOG_INDEX?.get(bareId);
 }
 
 // ---------------------------------------------------------------------------
@@ -603,7 +638,9 @@ export default definePluginEntry({
 
   register(api) {
     try {
-      log("plugin registered — registering provider and embedding adapter");
+      // Silent on success to avoid per-load log spam (openclaw re-imports
+      // this plugin frequently; debug output is gated to FROSTCLAW_DEBUG).
+      log("plugin registered");
       api.registerMemoryEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
       api.registerProvider({
       id: "snowflake-cortex",
@@ -659,7 +696,7 @@ export default definePluginEntry({
               },
             };
           } catch (err) {
-            log("catalog.run ERROR", {
+            logError("catalog.run ERROR", {
               error: String(err),
               stack: err instanceof Error ? err.stack : undefined,
             });
@@ -902,7 +939,7 @@ export default definePluginEntry({
                   return value;
                 },
                 (err) => {
-                  log("wrapStreamFn.promise REJECTED", {
+                  logError("wrapStreamFn.promise REJECTED", {
                     error: String(err),
                     stack: err instanceof Error ? err.stack : undefined,
                   });
@@ -912,7 +949,7 @@ export default definePluginEntry({
             }
             return streamResult;
           } catch (err) {
-            log("wrapStreamFn.inner ERROR", {
+            logError("wrapStreamFn.inner ERROR", {
               error: String(err),
               stack: err instanceof Error ? err.stack : undefined,
             });
@@ -953,7 +990,7 @@ export default definePluginEntry({
       },
     });
     } catch (err) {
-      log("register ERROR", {
+      logError("register ERROR", {
         error: String(err),
         stack: err instanceof Error ? err.stack : undefined,
       });
