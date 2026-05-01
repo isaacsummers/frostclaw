@@ -1,25 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# OpenClaw post-update hook
-# Called by mise postinstall after npm:openclaw upgrades.
-# Handles: gateway service refresh, frostclaw rebuild, embed proxy restart.
-#
-# mise injects MISE_TOOL_INSTALL_PATH pointing at the newly installed version dir.
-# We use it directly for `openclaw gateway install` so the shim (which still
-# points at the previous version until mise finishes) can't stamp the old version
-# into the service file.
+# OpenClaw post-update script
+# Run after `openclaw update --no-restart` to rebuild frostclaw and bring the gateway back up.
+# Handles: frostclaw rebuild, gateway service refresh, embed proxy restart, doctor verification.
 
 FROSTCLAW_DIR="${FROSTCLAW_DIR:-$HOME/projects/frostclaw}"
 GATEWAY_SVC="$HOME/.config/systemd/user/openclaw-gateway.service"
 
-# Resolve the openclaw binary from the freshly-installed version.
-# Fall back to PATH only if MISE_TOOL_INSTALL_PATH isn't set (manual runs).
-if [ -n "${MISE_TOOL_INSTALL_PATH:-}" ]; then
-  OPENCLAW_BIN="$MISE_TOOL_INSTALL_PATH/bin/openclaw"
-else
-  OPENCLAW_BIN="$(command -v openclaw)"
-fi
+OPENCLAW_BIN="$(command -v openclaw)"
 
 if [ ! -x "$OPENCLAW_BIN" ]; then
   echo "  ❌ openclaw binary not found at $OPENCLAW_BIN — aborting" >&2
@@ -40,8 +29,6 @@ if [ -d "$FROSTCLAW_DIR" ]; then
   echo "==> Rebuilding frostclaw plugin..."
   cd "$FROSTCLAW_DIR"
 
-  # openclaw dep is a file: link pointing at the mise `latest` symlink, so it
-  # always resolves to whatever mise just installed. bun install re-links it.
   bun install
   bun run build
 
@@ -66,3 +53,9 @@ if [ -d "$FROSTCLAW_DIR" ]; then
   echo "==> Restarting embed proxy..."
   systemctl --user restart snowflake-embed-proxy 2>/dev/null || true
 fi
+
+# Run doctor now that the gateway is up with the freshly built plugin.
+# (openclaw update --no-restart ran doctor before the restart, so this verifies
+# the full post-restart state including frostclaw loading correctly.)
+echo "==> Running openclaw doctor..."
+"$OPENCLAW_BIN" doctor || true
