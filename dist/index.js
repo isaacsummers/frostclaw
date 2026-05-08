@@ -172,7 +172,9 @@ var CLAUDE_MODELS = [
   { id: "claude-opus-4-6", name: "Claude Opus 4.6", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-opus-4-5", name: "Claude Opus 4.5", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] }
+  { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
+  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", reasoning: false, contextWindow: 200000, maxTokens: 8192, input: ["text", "image"] },
+  { id: "claude-haiku-3-5", name: "Claude Haiku 3.5", reasoning: false, contextWindow: 200000, maxTokens: 8192, input: ["text", "image"] }
 ];
 var OPENAI_MODELS = [
   { id: "openai-gpt-5.4", name: "GPT-5.4", reasoning: true, contextWindow: 128000, maxTokens: 32768, input: ["text", "image"] },
