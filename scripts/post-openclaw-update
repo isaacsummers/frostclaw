@@ -58,4 +58,4 @@ fi
 # (openclaw update --no-restart ran doctor before the restart, so this verifies
 # the full post-restart state including frostclaw loading correctly.)
 echo "==> Running openclaw doctor..."
-"$OPENCLAW_BIN" doctor || true
+"$OPENCLAW_BIN" doctor --non-interactive || true
