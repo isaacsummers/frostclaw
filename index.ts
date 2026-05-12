@@ -335,37 +335,37 @@ interface CortexModelSpec {
 }
 
 const CLAUDE_MODELS: CortexModelSpec[] = [
-  { id: "claude-opus-4-7",   name: "Claude Opus 4.7",   reasoning: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-opus-4-6",   name: "Claude Opus 4.6",   reasoning: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-opus-4-5",   name: "Claude Opus 4.5",   reasoning: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-haiku-4-5",  name: "Claude Haiku 4.5",  reasoning: false, contextWindow: 200_000, maxTokens: 8_192,   input: ["text", "image"] },
-  { id: "claude-haiku-3-5",  name: "Claude Haiku 3.5",  reasoning: false, contextWindow: 200_000, maxTokens: 8_192,   input: ["text", "image"] },
+  // Claude 4 family
+  { id: "claude-4-opus",                   name: "Claude 4 Opus",                    reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] }, // $15/$75 tier
+  { id: "claude-opus-4-7",                  name: "Claude Opus 4.7",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-opus-4-6",                  name: "Claude Opus 4.6",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-opus-4-5",                  name: "Claude Opus 4.5",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-4-sonnet",                  name: "Claude 4 Sonnet",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-sonnet-4-6",                name: "Claude Sonnet 4.6",                reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-sonnet-4-5",                name: "Claude Sonnet 4.5",                reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-sonnet-4-5-long-context",   name: "Claude Sonnet 4.5 (Long Context)", reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-haiku-4-5",                 name: "Claude Haiku 4.5",                 reasoning: false, contextWindow: 200_000, maxTokens: 8_192,   input: ["text", "image"] },
+  // Claude 3 family
+  { id: "claude-3-7-sonnet",                name: "Claude 3.7 Sonnet",                reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
 ];
 
 const OPENAI_MODELS: CortexModelSpec[] = [
-  { id: "openai-gpt-5.4",      name: "GPT-5.4",       reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] }, // preview
-  { id: "openai-gpt-5.2",      name: "GPT-5.2",       reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
-  { id: "openai-gpt-5.1",      name: "GPT-5.1",       reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
-  { id: "openai-gpt-5",        name: "GPT-5",         reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] }, // preview
-  { id: "openai-gpt-5-mini",   name: "GPT-5 Mini",    reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] }, // preview
-  { id: "openai-gpt-5-nano",   name: "GPT-5 Nano",    reasoning: false, contextWindow: 128_000,   maxTokens: 16_384, input: ["text", "image"] }, // preview
-  { id: "openai-gpt-oss-120b", name: "GPT OSS 120B",  reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text"] },           // preview
-  { id: "openai-gpt-4.1",      name: "GPT-4.1",       reasoning: false, contextWindow: 1_047_576, maxTokens: 32_768, input: ["text", "image"] },
+  { id: "openai-gpt-5.5",              name: "GPT-5.5",                reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] }, // preview
+  { id: "openai-gpt-5.5-long-context", name: "GPT-5.5 (Long Context)", reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] }, // preview
+  { id: "openai-gpt-5.4",              name: "GPT-5.4",                reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
+  { id: "openai-gpt-5.4-long-context", name: "GPT-5.4 (Long Context)", reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
+  { id: "openai-gpt-5.2",              name: "GPT-5.2",                reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
+  { id: "openai-gpt-5.1",              name: "GPT-5.1",                reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
+  { id: "openai-gpt-5",               name: "GPT-5",                  reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] }, // preview
+  { id: "openai-gpt-5-mini",           name: "GPT-5 Mini",             reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] }, // preview
+  { id: "openai-gpt-5-nano",           name: "GPT-5 Nano",             reasoning: false, contextWindow: 128_000,   maxTokens: 16_384, input: ["text", "image"] }, // preview
+  { id: "openai-gpt-4.1",              name: "GPT-4.1",                reasoning: false, contextWindow: 1_047_576, maxTokens: 32_768, input: ["text", "image"] },
+  { id: "openai-o4-mini",              name: "o4-mini",                reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
 ];
 
-const OPEN_SOURCE_MODELS: CortexModelSpec[] = [
-  { id: "llama4-maverick", name: "Llama 4 Maverick", reasoning: false, contextWindow: 1_048_576, maxTokens: 16_384, input: ["text"] },
-  { id: "llama3.1-70b", name: "Llama 3.1 70B", reasoning: false, contextWindow: 128_000, maxTokens: 4_096, input: ["text"] },
-  { id: "llama3.1-8b", name: "Llama 3.1 8B", reasoning: false, contextWindow: 128_000, maxTokens: 4_096, input: ["text"] },
-  { id: "llama3.1-405b", name: "Llama 3.1 405B", reasoning: false, contextWindow: 128_000, maxTokens: 4_096, input: ["text"] },
-  { id: "mistral-large", name: "Mistral Large", reasoning: false, contextWindow: 32_000, maxTokens: 8_192, input: ["text"] },
-  { id: "mistral-large2", name: "Mistral Large 2", reasoning: false, contextWindow: 128_000, maxTokens: 8_192, input: ["text"] },
-  { id: "deepseek-r1", name: "DeepSeek R1", reasoning: true, contextWindow: 64_000, maxTokens: 8_192, input: ["text"] },
-  { id: "snowflake-arctic",        name: "Snowflake Arctic",         reasoning: false, contextWindow:   4_096, maxTokens: 4_096, input: ["text"] },
-  { id: "snowflake-llama-3.3-70b", name: "Snowflake Llama 3.3 70B", reasoning: false, contextWindow: 128_000, maxTokens: 4_096, input: ["text"] },
-];
+// No open-source models in the current Snowflake pricing table (2026-05).
+// Dynamic model resolution handles any future additions via resolveDynamicModel.
+const OPEN_SOURCE_MODELS: CortexModelSpec[] = [];
 
 // ---------------------------------------------------------------------------
 // Cost per token (USD) — sourced from Snowflake Service Consumption Table
@@ -382,26 +382,30 @@ const OPEN_SOURCE_MODELS: CortexModelSpec[] = [
 // using the same rates as claude-opus-4-6 until official pricing is published.
 // ---------------------------------------------------------------------------
 
-// Table 6(b) — Claude models
-const COST_OPUS   = { input: 0.0000055,   output: 0.0000275,   cacheRead: 0.00000055, cacheWrite: 0 }; // $5.50/$27.50/$0.55 per 1M (AWS Regional)
-const COST_SONNET = { input: 0.0000033,   output: 0.0000165,   cacheRead: 0.00000033, cacheWrite: 0 }; // $3.30/$16.50/$0.33 per 1M (AWS Regional)
-const COST_HAIKU  = { input: 0.0000011,   output: 0.0000055,   cacheRead: 0.00000011, cacheWrite: 0 }; // $1.10/$5.50/$0.11 per 1M (AWS Regional)
+// Costs sourced from Snowflake Service Consumption Table (2026-05), AWS/Azure Regional pricing.
+// All values are USD per token (divide per-1M rate by 1,000,000).
+// Global pricing is ~10% cheaper; we track Regional as the conservative default.
 
-// Table 6(b) — OpenAI models (no separate cache-read pricing listed; using 10% heuristic)
-const COST_GPT54  = { input: 0.0000025,   output: 0.000015,    cacheRead: 0.00000025,  cacheWrite: 0 }; // $2.50/$15/$0.25 per 1M (gpt-5.4)
-const COST_GPT52  = { input: 0.00000175,  output: 0.000014,    cacheRead: 0.000000175, cacheWrite: 0 }; // $1.75/$14/$0.18 per 1M (gpt-5.2)
-const COST_GPT5   = { input: 0.00000125,  output: 0.00001,     cacheRead: 0.000000125, cacheWrite: 0 }; // $1.25/$10/$0.13 per 1M (gpt-5, gpt-5.1)
-const COST_GPT41  = { input: 0.000002,    output: 0.000008,    cacheRead: 0.0000002,   cacheWrite: 0 }; // $2/$8/$0.20 per 1M (gpt-4.1)
+// Claude models (AWS Regional)
+const COST_CLAUDE_4_OPUS  = { input: 0.000015,   output: 0.000075,   cacheRead: 0.0000015,  cacheWrite: 0.00001875 }; // $15.00/$75.00 | claude-4-opus
+const COST_OPUS           = { input: 0.0000055,  output: 0.0000275,  cacheRead: 0.00000055, cacheWrite: 0.000006875 }; // $5.50/$27.50  | claude-opus-4-5/4-6/4-7
+const COST_SONNET         = { input: 0.0000033,  output: 0.0000165,  cacheRead: 0.00000033, cacheWrite: 0.000004125 }; // $3.30/$16.50  | claude-sonnet-4-5/4-6
+const COST_SONNET_LONG    = { input: 0.0000066,  output: 0.00002475, cacheRead: 0.00000066, cacheWrite: 0.00000825  }; // $6.60/$24.75  | long-context variant
+const COST_HAIKU          = { input: 0.0000011,  output: 0.0000055,  cacheRead: 0.00000011, cacheWrite: 0.000001375 }; // $1.10/$5.50   | claude-haiku-4-5
+const COST_CLAUDE_37      = { input: 0.000003,   output: 0.000015,   cacheRead: 0.0000003,  cacheWrite: 0.000003750 }; // $3.00/$15.00  | claude-3-7-sonnet
+const COST_CLAUDE_4S      = { input: 0.000003,   output: 0.000015,   cacheRead: 0.0000003,  cacheWrite: 0.000003750 }; // $3.00/$15.00  | claude-4-sonnet
 
-// Table 6(c) — Open-source models (no prompt caching)
-const COST_LLAMA_405B = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 }; // approx, not in 6(c); using 70b rate
-const COST_LLAMA_70B  = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 }; // $0.72/$0.72 per 1M
-const COST_LLAMA_8B   = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 }; // not in 6(c); using 70b rate as fallback
-const COST_LLAMA4_MAV = { input: 0.00000024, output: 0.00000097, cacheRead: 0, cacheWrite: 0 }; // $0.24/$0.97 per 1M
-const COST_MISTRAL_L  = { input: 0.000002,   output: 0.000006,   cacheRead: 0, cacheWrite: 0 }; // legacy; using L2 rate
-const COST_MISTRAL_L2 = { input: 0.000002,   output: 0.000006,   cacheRead: 0, cacheWrite: 0 }; // $2/$6 per 1M
-const COST_DEEPSEEK   = { input: 0.00000135, output: 0.0000054,  cacheRead: 0, cacheWrite: 0 }; // $1.35/$5.40 per 1M
-const COST_ARCTIC     = { input: 0,          output: 0,           cacheRead: 0, cacheWrite: 0 }; // Snowflake native — free tier
+// OpenAI models (Azure Regional)
+const COST_GPT55          = { input: 0.0000055,  output: 0.000033,   cacheRead: 0.00000055, cacheWrite: 0 }; // $5.50/$33.00  | gpt-5.5
+const COST_GPT55_LONG     = { input: 0.000011,   output: 0.0000495,  cacheRead: 0.0000011,  cacheWrite: 0 }; // $11.00/$49.50 | gpt-5.5-long-context
+const COST_GPT54          = { input: 0.00000275, output: 0.0000165,  cacheRead: 0.00000028, cacheWrite: 0 }; // $2.75/$16.50  | gpt-5.4
+const COST_GPT54_LONG     = { input: 0.0000055,  output: 0.00002475, cacheRead: 0.00000055, cacheWrite: 0 }; // $5.50/$24.75  | gpt-5.4-long-context
+const COST_GPT52          = { input: 0.00000193, output: 0.0000154,  cacheRead: 0.00000019, cacheWrite: 0 }; // $1.93/$15.40  | gpt-5.2
+const COST_GPT51          = { input: 0.00000138, output: 0.000011,   cacheRead: 0.00000014, cacheWrite: 0 }; // $1.38/$11.00  | gpt-5 / gpt-5.1
+const COST_GPT5_MINI      = { input: 0.00000028, output: 0.0000022,  cacheRead: 0.000000028,cacheWrite: 0 }; // $0.28/$2.20   | gpt-5-mini
+const COST_GPT5_NANO      = { input: 0.00000006, output: 0.00000044, cacheRead: 0.000000006,cacheWrite: 0 }; // $0.06/$0.44   | gpt-5-nano
+const COST_GPT41          = { input: 0.0000022,  output: 0.0000088,  cacheRead: 0.00000055, cacheWrite: 0 }; // $2.20/$8.80   | gpt-4.1
+const COST_O4_MINI        = { input: 0.0000011,  output: 0.0000044,  cacheRead: 0.00000028, cacheWrite: 0 }; // $1.10/$4.40   | o4-mini
 
 /** Catalog-level beta headers — always-safe flags only. Thinking flags are
  *  added per-request in wrapStreamFn based on ctx.thinkingLevel. */
@@ -411,9 +415,13 @@ function anthropicBetaHeaders(): Record<string, string> {
 
 /** Map a Claude model ID to its cost tier */
 function claudeCost(id: string): typeof COST_OPUS {
-  if (id.startsWith("claude-opus")) return COST_OPUS;
-  if (id.startsWith("claude-sonnet")) return COST_SONNET;
-  if (id.startsWith("claude-haiku")) return COST_HAIKU;
+  if (id === "claude-4-opus")              return COST_CLAUDE_4_OPUS;
+  if (id.startsWith("claude-opus"))        return COST_OPUS;
+  if (id.endsWith("-long-context"))        return COST_SONNET_LONG;
+  if (id === "claude-4-sonnet")            return COST_CLAUDE_4S;
+  if (id === "claude-3-7-sonnet")          return COST_CLAUDE_37;
+  if (id.startsWith("claude-sonnet"))      return COST_SONNET;
+  if (id.startsWith("claude-haiku"))       return COST_HAIKU;
   return COST_OPUS; // fallback to most expensive
 }
 
@@ -427,7 +435,7 @@ function buildClaudeModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
     // without a null-check after the `provider !== "openrouter"` short-circuit,
     // so an undefined baseUrl crashes every stream call with
     // "Cannot read properties of undefined (reading 'includes')".
-    baseUrl: `${getBaseURL()}/api/v2/cortex/v1`,
+    baseUrl: `${getBaseURL()}/api/v2/cortex`,
     reasoning: spec.reasoning,
     input: spec.input,
     cost: claudeCost(spec.id),
@@ -439,11 +447,19 @@ function buildClaudeModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
 }
 
 /** Map an OpenAI model ID to its cost tier */
-function openaiCost(id: string): typeof COST_GPT5 {
-  if (id === "openai-gpt-5.4") return COST_GPT54;
-  if (id === "openai-gpt-5.2") return COST_GPT52;
-  if (id.startsWith("openai-gpt-4")) return COST_GPT41;
-  return COST_GPT5; // gpt-5, gpt-5.1, gpt-5-mini, gpt-5-nano, gpt-oss-120b
+function openaiCost(id: string): typeof COST_GPT51 {
+  if (id === "openai-gpt-5.5-long-context") return COST_GPT55_LONG;
+  if (id === "openai-gpt-5.5")              return COST_GPT55;
+  if (id === "openai-gpt-5.4-long-context") return COST_GPT54_LONG;
+  if (id === "openai-gpt-5.4")              return COST_GPT54;
+  if (id === "openai-gpt-5.2")              return COST_GPT52;
+  if (id === "openai-gpt-5.1")              return COST_GPT51;
+  if (id === "openai-gpt-5")               return COST_GPT51; // same tier as 5.1
+  if (id === "openai-gpt-5-mini")           return COST_GPT5_MINI;
+  if (id === "openai-gpt-5-nano")           return COST_GPT5_NANO;
+  if (id.startsWith("openai-gpt-4"))        return COST_GPT41;
+  if (id === "openai-o4-mini")              return COST_O4_MINI;
+  return COST_GPT51; // fallback
 }
 
 function buildOpenAIModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
@@ -451,7 +467,7 @@ function buildOpenAIModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
     id: spec.id,
     name: spec.name,
     api: "openai-completions" as ModelApi,
-    baseUrl: `${getBaseURL()}/api/v2/cortex/v1`,
+    baseUrl: `${getBaseURL()}/api/v2/cortex`,
     reasoning: spec.reasoning,
     input: spec.input,
     cost: openaiCost(spec.id),
@@ -466,17 +482,10 @@ function buildOpenAIModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
 }
 
 /** Map an open-source model ID to its cost tier */
-function openSourceCost(id: string): typeof COST_LLAMA_70B {
-  if (id === "llama4-maverick") return COST_LLAMA4_MAV;
-  if (id === "llama3.1-405b") return COST_LLAMA_405B;
-  if (id === "llama3.1-70b" || id === "llama3.3-70b") return COST_LLAMA_70B;
-  if (id === "llama3.1-8b") return COST_LLAMA_8B;
-  if (id === "mistral-large") return COST_MISTRAL_L;
-  if (id === "mistral-large2") return COST_MISTRAL_L2;
-  if (id === "deepseek-r1") return COST_DEEPSEEK;
-  if (id === "snowflake-arctic") return COST_ARCTIC;
-  if (id === "snowflake-llama-3.3-70b") return COST_LLAMA_70B;
-  return COST_LLAMA_70B; // fallback
+function openSourceCost(_id: string): typeof COST_GPT51 {
+  // No open-source models in current catalog; fallback to a mid-tier rate
+  // so dynamic model resolution doesn't silently bill at zero.
+  return COST_GPT51;
 }
 
 function buildOpenSourceModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
@@ -484,7 +493,7 @@ function buildOpenSourceModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
     id: spec.id,
     name: spec.name,
     api: "openai-completions" as ModelApi,
-    baseUrl: `${getBaseURL()}/api/v2/cortex/v1`,
+    baseUrl: `${getBaseURL()}/api/v2/cortex`,
     reasoning: spec.reasoning,
     input: spec.input,
     cost: openSourceCost(spec.id),
@@ -690,7 +699,7 @@ export default definePluginEntry({
             log("catalog.run returning catalog", { modelCount: models.length });
             return {
               provider: {
-                baseUrl: `${baseURL}/api/v2/cortex/v1`,
+                baseUrl: `${baseURL}/api/v2/cortex`,
                 apiKey: resolvedKey,
                 api: "openai-completions" as ModelApi,
                 authHeader: true,
@@ -746,7 +755,7 @@ export default definePluginEntry({
         const claude = isClaudeModel(modelId);
         const api: ModelApi = claude ? "anthropic-messages" : "openai-completions";
         const input: Array<"text" | "image"> = claude ? ["text", "image"] : ["text"];
-        const baseUrl = `${getBaseURL()}/api/v2/cortex/v1`;
+        const baseUrl = `${getBaseURL()}/api/v2/cortex`;
         log("resolveDynamicModel (unknown id, minimal stub)", { modelId, api, input, baseUrl });
         return { id: modelId, name: modelId, api, input, baseUrl };
       },
@@ -818,7 +827,7 @@ export default definePluginEntry({
               (modelObj as Record<string, unknown>).input = inferred;
             }
             if (modelObj && typeof modelObj.baseUrl !== "string") {
-              const fallbackBaseUrl = `${getBaseURL()}/api/v2/cortex/v1`;
+              const fallbackBaseUrl = `${getBaseURL()}/api/v2/cortex`;
               log("wrapStreamFn.inner: patching missing baseUrl", {
                 modelId: String(modelObj.id ?? ""),
                 fallbackBaseUrl,
@@ -850,7 +859,15 @@ export default definePluginEntry({
                 "anthropic-beta"
               ] ?? "";
             const betaFlags = catalogBeta ? [catalogBeta] : [];
-            if (thinkingActive) {
+            // Only send thinking beta flags for models that support extended
+            // thinking (reasoning: true). Non-reasoning models like Haiku accept
+            // the BETA_ALWAYS headers fine but reject BETA_THINKING flags with a
+            // 400 even when the payload itself has no thinking field — OpenClaw
+            // core already skips the thinking field for reasoning:false models,
+            // but the headers are added here independently of the payload.
+            const modelSupportsReasoning =
+              (modelObj as { reasoning?: boolean } | undefined)?.reasoning === true;
+            if (thinkingActive && modelSupportsReasoning) {
               betaFlags.push(BETA_THINKING.join(","));
             }
 

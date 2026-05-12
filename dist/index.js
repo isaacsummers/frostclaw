@@ -168,56 +168,62 @@ function modelSupportsTools(modelId) {
   return modelId.toLowerCase().startsWith("openai-");
 }
 var CLAUDE_MODELS = [
+  { id: "claude-4-opus", name: "Claude 4 Opus", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-opus-4-7", name: "Claude Opus 4.7", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-opus-4-6", name: "Claude Opus 4.6", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-opus-4-5", name: "Claude Opus 4.5", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
+  { id: "claude-4-sonnet", name: "Claude 4 Sonnet", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
+  { id: "claude-sonnet-4-5-long-context", name: "Claude Sonnet 4.5 (Long Context)", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", reasoning: false, contextWindow: 200000, maxTokens: 8192, input: ["text", "image"] },
-  { id: "claude-haiku-3-5", name: "Claude Haiku 3.5", reasoning: false, contextWindow: 200000, maxTokens: 8192, input: ["text", "image"] }
+  { id: "claude-3-7-sonnet", name: "Claude 3.7 Sonnet", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] }
 ];
 var OPENAI_MODELS = [
+  { id: "openai-gpt-5.5", name: "GPT-5.5", reasoning: true, contextWindow: 128000, maxTokens: 32768, input: ["text", "image"] },
+  { id: "openai-gpt-5.5-long-context", name: "GPT-5.5 (Long Context)", reasoning: true, contextWindow: 128000, maxTokens: 32768, input: ["text", "image"] },
   { id: "openai-gpt-5.4", name: "GPT-5.4", reasoning: true, contextWindow: 128000, maxTokens: 32768, input: ["text", "image"] },
+  { id: "openai-gpt-5.4-long-context", name: "GPT-5.4 (Long Context)", reasoning: true, contextWindow: 128000, maxTokens: 32768, input: ["text", "image"] },
   { id: "openai-gpt-5.2", name: "GPT-5.2", reasoning: true, contextWindow: 128000, maxTokens: 32768, input: ["text", "image"] },
   { id: "openai-gpt-5.1", name: "GPT-5.1", reasoning: true, contextWindow: 128000, maxTokens: 32768, input: ["text", "image"] },
   { id: "openai-gpt-5", name: "GPT-5", reasoning: true, contextWindow: 128000, maxTokens: 32768, input: ["text", "image"] },
   { id: "openai-gpt-5-mini", name: "GPT-5 Mini", reasoning: true, contextWindow: 128000, maxTokens: 32768, input: ["text", "image"] },
   { id: "openai-gpt-5-nano", name: "GPT-5 Nano", reasoning: false, contextWindow: 128000, maxTokens: 16384, input: ["text", "image"] },
-  { id: "openai-gpt-oss-120b", name: "GPT OSS 120B", reasoning: true, contextWindow: 128000, maxTokens: 32768, input: ["text"] },
-  { id: "openai-gpt-4.1", name: "GPT-4.1", reasoning: false, contextWindow: 1047576, maxTokens: 32768, input: ["text", "image"] }
+  { id: "openai-gpt-4.1", name: "GPT-4.1", reasoning: false, contextWindow: 1047576, maxTokens: 32768, input: ["text", "image"] },
+  { id: "openai-o4-mini", name: "o4-mini", reasoning: true, contextWindow: 128000, maxTokens: 32768, input: ["text", "image"] }
 ];
-var OPEN_SOURCE_MODELS = [
-  { id: "llama4-maverick", name: "Llama 4 Maverick", reasoning: false, contextWindow: 1048576, maxTokens: 16384, input: ["text"] },
-  { id: "llama3.1-70b", name: "Llama 3.1 70B", reasoning: false, contextWindow: 128000, maxTokens: 4096, input: ["text"] },
-  { id: "llama3.1-8b", name: "Llama 3.1 8B", reasoning: false, contextWindow: 128000, maxTokens: 4096, input: ["text"] },
-  { id: "llama3.1-405b", name: "Llama 3.1 405B", reasoning: false, contextWindow: 128000, maxTokens: 4096, input: ["text"] },
-  { id: "mistral-large", name: "Mistral Large", reasoning: false, contextWindow: 32000, maxTokens: 8192, input: ["text"] },
-  { id: "mistral-large2", name: "Mistral Large 2", reasoning: false, contextWindow: 128000, maxTokens: 8192, input: ["text"] },
-  { id: "deepseek-r1", name: "DeepSeek R1", reasoning: true, contextWindow: 64000, maxTokens: 8192, input: ["text"] },
-  { id: "snowflake-arctic", name: "Snowflake Arctic", reasoning: false, contextWindow: 4096, maxTokens: 4096, input: ["text"] },
-  { id: "snowflake-llama-3.3-70b", name: "Snowflake Llama 3.3 70B", reasoning: false, contextWindow: 128000, maxTokens: 4096, input: ["text"] }
-];
-var COST_OPUS = { input: 0.0000055, output: 0.0000275, cacheRead: 0.00000055, cacheWrite: 0 };
-var COST_SONNET = { input: 0.0000033, output: 0.0000165, cacheRead: 0.00000033, cacheWrite: 0 };
-var COST_HAIKU = { input: 0.0000011, output: 0.0000055, cacheRead: 0.00000011, cacheWrite: 0 };
-var COST_GPT54 = { input: 0.0000025, output: 0.000015, cacheRead: 0.00000025, cacheWrite: 0 };
-var COST_GPT52 = { input: 0.00000175, output: 0.000014, cacheRead: 0.000000175, cacheWrite: 0 };
-var COST_GPT5 = { input: 0.00000125, output: 0.00001, cacheRead: 0.000000125, cacheWrite: 0 };
-var COST_GPT41 = { input: 0.000002, output: 0.000008, cacheRead: 0.0000002, cacheWrite: 0 };
-var COST_LLAMA_405B = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 };
-var COST_LLAMA_70B = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 };
-var COST_LLAMA_8B = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 };
-var COST_LLAMA4_MAV = { input: 0.00000024, output: 0.00000097, cacheRead: 0, cacheWrite: 0 };
-var COST_MISTRAL_L = { input: 0.000002, output: 0.000006, cacheRead: 0, cacheWrite: 0 };
-var COST_MISTRAL_L2 = { input: 0.000002, output: 0.000006, cacheRead: 0, cacheWrite: 0 };
-var COST_DEEPSEEK = { input: 0.00000135, output: 0.0000054, cacheRead: 0, cacheWrite: 0 };
-var COST_ARCTIC = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+var OPEN_SOURCE_MODELS = [];
+var COST_CLAUDE_4_OPUS = { input: 0.000015, output: 0.000075, cacheRead: 0.0000015, cacheWrite: 0.00001875 };
+var COST_OPUS = { input: 0.0000055, output: 0.0000275, cacheRead: 0.00000055, cacheWrite: 0.000006875 };
+var COST_SONNET = { input: 0.0000033, output: 0.0000165, cacheRead: 0.00000033, cacheWrite: 0.000004125 };
+var COST_SONNET_LONG = { input: 0.0000066, output: 0.00002475, cacheRead: 0.00000066, cacheWrite: 0.00000825 };
+var COST_HAIKU = { input: 0.0000011, output: 0.0000055, cacheRead: 0.00000011, cacheWrite: 0.000001375 };
+var COST_CLAUDE_37 = { input: 0.000003, output: 0.000015, cacheRead: 0.0000003, cacheWrite: 0.00000375 };
+var COST_CLAUDE_4S = { input: 0.000003, output: 0.000015, cacheRead: 0.0000003, cacheWrite: 0.00000375 };
+var COST_GPT55 = { input: 0.0000055, output: 0.000033, cacheRead: 0.00000055, cacheWrite: 0 };
+var COST_GPT55_LONG = { input: 0.000011, output: 0.0000495, cacheRead: 0.0000011, cacheWrite: 0 };
+var COST_GPT54 = { input: 0.00000275, output: 0.0000165, cacheRead: 0.00000028, cacheWrite: 0 };
+var COST_GPT54_LONG = { input: 0.0000055, output: 0.00002475, cacheRead: 0.00000055, cacheWrite: 0 };
+var COST_GPT52 = { input: 0.00000193, output: 0.0000154, cacheRead: 0.00000019, cacheWrite: 0 };
+var COST_GPT51 = { input: 0.00000138, output: 0.000011, cacheRead: 0.00000014, cacheWrite: 0 };
+var COST_GPT5_MINI = { input: 0.00000028, output: 0.0000022, cacheRead: 0.000000028, cacheWrite: 0 };
+var COST_GPT5_NANO = { input: 0.00000006, output: 0.00000044, cacheRead: 0.000000006, cacheWrite: 0 };
+var COST_GPT41 = { input: 0.0000022, output: 0.0000088, cacheRead: 0.00000055, cacheWrite: 0 };
+var COST_O4_MINI = { input: 0.0000011, output: 0.0000044, cacheRead: 0.00000028, cacheWrite: 0 };
 function anthropicBetaHeaders() {
   return { "anthropic-beta": BETA_ALWAYS.join(",") };
 }
 function claudeCost(id) {
+  if (id === "claude-4-opus")
+    return COST_CLAUDE_4_OPUS;
   if (id.startsWith("claude-opus"))
     return COST_OPUS;
+  if (id.endsWith("-long-context"))
+    return COST_SONNET_LONG;
+  if (id === "claude-4-sonnet")
+    return COST_CLAUDE_4S;
+  if (id === "claude-3-7-sonnet")
+    return COST_CLAUDE_37;
   if (id.startsWith("claude-sonnet"))
     return COST_SONNET;
   if (id.startsWith("claude-haiku"))
@@ -229,7 +235,7 @@ function buildClaudeModelDef(spec) {
     id: spec.id,
     name: spec.name,
     api: "anthropic-messages",
-    baseUrl: `${getBaseURL()}/api/v2/cortex/v1`,
+    baseUrl: `${getBaseURL()}/api/v2/cortex`,
     reasoning: spec.reasoning,
     input: spec.input,
     cost: claudeCost(spec.id),
@@ -240,20 +246,36 @@ function buildClaudeModelDef(spec) {
   };
 }
 function openaiCost(id) {
+  if (id === "openai-gpt-5.5-long-context")
+    return COST_GPT55_LONG;
+  if (id === "openai-gpt-5.5")
+    return COST_GPT55;
+  if (id === "openai-gpt-5.4-long-context")
+    return COST_GPT54_LONG;
   if (id === "openai-gpt-5.4")
     return COST_GPT54;
   if (id === "openai-gpt-5.2")
     return COST_GPT52;
+  if (id === "openai-gpt-5.1")
+    return COST_GPT51;
+  if (id === "openai-gpt-5")
+    return COST_GPT51;
+  if (id === "openai-gpt-5-mini")
+    return COST_GPT5_MINI;
+  if (id === "openai-gpt-5-nano")
+    return COST_GPT5_NANO;
   if (id.startsWith("openai-gpt-4"))
     return COST_GPT41;
-  return COST_GPT5;
+  if (id === "openai-o4-mini")
+    return COST_O4_MINI;
+  return COST_GPT51;
 }
 function buildOpenAIModelDef(spec) {
   return {
     id: spec.id,
     name: spec.name,
     api: "openai-completions",
-    baseUrl: `${getBaseURL()}/api/v2/cortex/v1`,
+    baseUrl: `${getBaseURL()}/api/v2/cortex`,
     reasoning: spec.reasoning,
     input: spec.input,
     cost: openaiCost(spec.id),
@@ -266,33 +288,15 @@ function buildOpenAIModelDef(spec) {
     }
   };
 }
-function openSourceCost(id) {
-  if (id === "llama4-maverick")
-    return COST_LLAMA4_MAV;
-  if (id === "llama3.1-405b")
-    return COST_LLAMA_405B;
-  if (id === "llama3.1-70b" || id === "llama3.3-70b")
-    return COST_LLAMA_70B;
-  if (id === "llama3.1-8b")
-    return COST_LLAMA_8B;
-  if (id === "mistral-large")
-    return COST_MISTRAL_L;
-  if (id === "mistral-large2")
-    return COST_MISTRAL_L2;
-  if (id === "deepseek-r1")
-    return COST_DEEPSEEK;
-  if (id === "snowflake-arctic")
-    return COST_ARCTIC;
-  if (id === "snowflake-llama-3.3-70b")
-    return COST_LLAMA_70B;
-  return COST_LLAMA_70B;
+function openSourceCost(_id) {
+  return COST_GPT51;
 }
 function buildOpenSourceModelDef(spec) {
   return {
     id: spec.id,
     name: spec.name,
     api: "openai-completions",
-    baseUrl: `${getBaseURL()}/api/v2/cortex/v1`,
+    baseUrl: `${getBaseURL()}/api/v2/cortex`,
     reasoning: spec.reasoning,
     input: spec.input,
     cost: openSourceCost(spec.id),
@@ -425,7 +429,7 @@ var frostclaw_default = definePluginEntry({
               log("catalog.run returning catalog", { modelCount: models.length });
               return {
                 provider: {
-                  baseUrl: `${baseURL}/api/v2/cortex/v1`,
+                  baseUrl: `${baseURL}/api/v2/cortex`,
                   apiKey: resolvedKey,
                   api: "openai-completions",
                   authHeader: true,
@@ -461,7 +465,7 @@ var frostclaw_default = definePluginEntry({
           const claude = isClaudeModel(modelId);
           const api2 = claude ? "anthropic-messages" : "openai-completions";
           const input = claude ? ["text", "image"] : ["text"];
-          const baseUrl = `${getBaseURL()}/api/v2/cortex/v1`;
+          const baseUrl = `${getBaseURL()}/api/v2/cortex`;
           log("resolveDynamicModel (unknown id, minimal stub)", { modelId, api: api2, input, baseUrl });
           return { id: modelId, name: modelId, api: api2, input, baseUrl };
         },
@@ -501,7 +505,7 @@ var frostclaw_default = definePluginEntry({
                 modelObj.input = inferred;
               }
               if (modelObj && typeof modelObj.baseUrl !== "string") {
-                const fallbackBaseUrl = `${getBaseURL()}/api/v2/cortex/v1`;
+                const fallbackBaseUrl = `${getBaseURL()}/api/v2/cortex`;
                 log("wrapStreamFn.inner: patching missing baseUrl", {
                   modelId: String(modelObj.id ?? ""),
                   fallbackBaseUrl,
@@ -522,7 +526,8 @@ var frostclaw_default = definePluginEntry({
               const originalOnPayload = options?.onPayload;
               const catalogBeta = model?.headers?.["anthropic-beta"] ?? "";
               const betaFlags = catalogBeta ? [catalogBeta] : [];
-              if (thinkingActive) {
+              const modelSupportsReasoning = modelObj?.reasoning === true;
+              if (thinkingActive && modelSupportsReasoning) {
                 betaFlags.push(BETA_THINKING.join(","));
               }
               const modelId = String(model?.id ?? "");
