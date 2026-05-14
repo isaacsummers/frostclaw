@@ -242,6 +242,16 @@
   "contracts": {
     "memoryEmbeddingProviders": [
       "snowflake-cortex"
+    ],
+    "embeddingModels": [
+      "snowflake-arctic-embed-m-v1.5",
+      "snowflake-arctic-embed-m",
+      "snowflake-arctic-embed-l-v2.0",
+      "e5-base-v2",
+      "multilingual-e5-large",
+      "nv-embed-qa-4",
+      "voyage-multimodal-3",
+      "voyage-multilingual-2"
     ]
   },
   "configSchema": {

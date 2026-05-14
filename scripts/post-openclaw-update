@@ -50,8 +50,8 @@ if [ -f "$GATEWAY_SVC" ]; then
 fi
 
 if [ -d "$FROSTCLAW_DIR" ]; then
-  echo "==> Restarting embed proxy..."
-  systemctl --user restart snowflake-embed-proxy 2>/dev/null || true
+  echo "==> Restarting unified Snowflake proxy..."
+  systemctl --user restart snowflake-proxy 2>/dev/null || true
 fi
 
 # Run doctor now that the gateway is up with the freshly built plugin.

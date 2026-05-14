@@ -68,6 +68,10 @@ Tool calling is supported for Claude and OpenAI models. Open-source models have 
 | `snowflake-arctic-embed-m` | 768 | |
 | `snowflake-arctic-embed-l-v2.0` | 1024 | Higher quality, larger |
 | `e5-base-v2` | 768 | |
+| `multilingual-e5-large` | – | |
+| `nv-embed-qa-4` | – | |
+| `voyage-multimodal-3` | – | |
+| `voyage-multilingual-2` | – | |
 
 See [Snowflake embed API docs](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-rest-api/embed-api) for model availability by region.
 
@@ -86,7 +90,7 @@ See [Snowflake embed API docs](https://docs.snowflake.com/en/user-guide/snowflak
 | `SNOWFLAKE_PAT` | Yes | Snowflake Programmatic Access Token |
 | `SNOWFLAKE_BASE_URL` | Yes | Account URL, e.g. `https://my-account.snowflakecomputing.com` |
 | `SNOWFLAKE_CORTEX_API_KEY` | No | Fallback for `SNOWFLAKE_PAT` |
-| `SNOWFLAKE_EMBED_PROXY_PORT` | No | Embed proxy port (default: `18790`) |
+| `SNOWFLAKE_CORTEX_PROXY_PORT` | No | Unified proxy port (default: `18790`) |
 
 ### Install
 
@@ -127,10 +131,10 @@ FrostClaw provides Snowflake Arctic Embed models for OpenClaw's memory search sy
 
 FrostClaw registers a native embedding adapter via `registerMemoryEmbeddingProvider` in the plugin SDK. The gateway process uses this adapter directly for real-time memory sync.
 
-For CLI tools like `openclaw memory index`, a lightweight embed proxy (`embed-proxy.mjs`) translates between OpenAI's embedding format and Snowflake's native embed API:
+For CLI tools like `openclaw memory index`, a unified proxy (`snowflake-proxy.mjs`) translates between OpenAI's embedding format and Snowflake's native embed API:
 
 ```
-OpenClaw CLI (openai provider) → embed-proxy.mjs:18790 → Snowflake /api/v2/cortex/inference:embed
+OpenClaw CLI (openai provider) → snowflake-proxy.mjs:18790 → Snowflake /api/v2/cortex/inference:embed
 ```
 
 The proxy is needed because OpenClaw's CLI loads plugins in a limited registration mode that doesn't support `registerMemoryEmbeddingProvider`. The proxy handles the format differences:
@@ -158,20 +162,20 @@ The proxy is needed because OpenClaw's CLI loads plugins in a limited registrati
 }
 ```
 
-### Running the Embed Proxy
+### Running the Unified Proxy
 
 As a systemd user service (recommended):
 
 ```sh
-cat > ~/.config/systemd/user/snowflake-embed-proxy.service << 'EOF'
+cat > ~/.config/systemd/user/snowflake-proxy.service << 'EOF'
 [Unit]
-Description=Frostclaw Snowflake Embed Proxy
+Description=Frostclaw Snowflake Unified Proxy
 After=network.target
 PartOf=openclaw-gateway.service
 
 [Service]
 Type=simple
-ExecStart=node /path/to/frostclaw/embed-proxy.mjs
+ExecStart=node /path/to/frostclaw/snowflake-proxy.mjs
 EnvironmentFile=~/.openclaw/.env
 Restart=on-failure
 RestartSec=5
@@ -181,13 +185,13 @@ WantedBy=default.target
 EOF
 
 systemctl --user daemon-reload
-systemctl --user enable --now snowflake-embed-proxy
+systemctl --user enable --now snowflake-proxy
 ```
 
 Or run directly:
 
 ```sh
-node embed-proxy.mjs
+node snowflake-proxy.mjs
 ```
 
 Health check: `GET http://127.0.0.1:18790/health`
@@ -206,7 +210,7 @@ Health check: `GET http://127.0.0.1:18790/health`
 ### Embedding
 
 - Gateway: native adapter via `registerMemoryEmbeddingProvider` (direct Snowflake API calls)
-- CLI: embed proxy with OpenAI-compatible format translation
+- CLI: unified proxy (`snowflake-proxy.mjs`) with OpenAI-compatible format translation
 - Both paths hit Snowflake's `/api/v2/cortex/inference:embed` endpoint
 
 ## License
