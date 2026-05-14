@@ -4,38 +4,8 @@ import {
 } from "openclaw/plugin-sdk/plugin-entry";
 import { resolveClaudeThinkingProfile } from "openclaw/plugin-sdk/provider-model-shared";
 import { createProviderApiKeyAuthMethod } from "openclaw/plugin-sdk/provider-auth-api-key";
-function getApiKey() {
-  return process.env.SNOWFLAKE_CORTEX_API_KEY ?? process.env.SNOWFLAKE_PAT ?? "";
-}
-function getBaseURL() {
-  return process.env.SNOWFLAKE_BASE_URL ?? "";
-}
-var DEBUG_ENABLED = (() => {
-  const v = process.env.FROSTCLAW_DEBUG;
-  if (!v)
-    return false;
-  const s = v.toLowerCase();
-  return s !== "0" && s !== "false" && s !== "off" && s !== "";
-})();
-function log(event, data) {
-  if (!DEBUG_ENABLED)
-    return;
-  const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
-  console.error(line);
-}
-function logError(event, data) {
-  const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
-  console.error(line);
-}
-var BETA_ALWAYS = [
-  "output-128k-2025-02-19",
-  "token-efficient-tools-2025-02-19"
-];
-var BETA_THINKING = [
-  "interleaved-thinking-2025-05-14",
-  "effort-2025-11-24",
-  "tool-examples-2025-10-29"
-];
+
+// src/transforms.ts
 function fixTrailingAssistant(messages) {
   const last = messages[messages.length - 1];
   if (!last || typeof last !== "object")
@@ -154,16 +124,45 @@ function clampMaxTokens(payload) {
   }
   if (current >= floor)
     return;
-  log("clampMaxTokens", {
-    received: current,
-    clampedTo: floor,
-    thinkingType: thinkingType ?? "none"
-  });
   payload.max_tokens = floor;
 }
 function isClaudeModel(modelId) {
   return modelId.toLowerCase().startsWith("claude");
 }
+
+// index.ts
+function getApiKey() {
+  return process.env.SNOWFLAKE_CORTEX_API_KEY ?? process.env.SNOWFLAKE_PAT ?? "";
+}
+function getBaseURL() {
+  return process.env.SNOWFLAKE_BASE_URL ?? "";
+}
+var DEBUG_ENABLED = (() => {
+  const v = process.env.FROSTCLAW_DEBUG;
+  if (!v)
+    return false;
+  const s = v.toLowerCase();
+  return s !== "0" && s !== "false" && s !== "off" && s !== "";
+})();
+function log(event, data) {
+  if (!DEBUG_ENABLED)
+    return;
+  const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
+  console.error(line);
+}
+function logError(event, data) {
+  const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
+  console.error(line);
+}
+var BETA_ALWAYS = [
+  "output-128k-2025-02-19",
+  "token-efficient-tools-2025-02-19"
+];
+var BETA_THINKING = [
+  "interleaved-thinking-2025-05-14",
+  "effort-2025-11-24",
+  "tool-examples-2025-10-29"
+];
 function modelSupportsTools(modelId) {
   return modelId.toLowerCase().startsWith("openai-");
 }
