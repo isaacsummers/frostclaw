@@ -258,6 +258,53 @@ describe("POST /v1/messages", () => {
     expect(capturedHeaders["anthropic-version"]).toBe("2023-06-01");
     expect(capturedHeaders["x-api-key"]).toBeUndefined();
   });
+
+  test("strips eager_input_streaming from tools[].custom; preserves other custom fields", async () => {
+    let upstreamBody: Record<string, unknown> = {};
+    mock.setHandler(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const c of req) chunks.push(c as Buffer);
+      upstreamBody = JSON.parse(Buffer.concat(chunks).toString());
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ id: "msg_test", type: "message" }));
+    });
+
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-5",
+        messages: [{ role: "user", content: "hi" }],
+        tools: [
+          {
+            type: "custom",
+            custom: {
+              name: "lookup",
+              description: "do a lookup",
+              input_schema: { type: "object" },
+              eager_input_streaming: true,
+            },
+          },
+          {
+            type: "custom",
+            custom: { eager_input_streaming: true },
+          },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+
+    const tools = upstreamBody.tools as Array<Record<string, unknown>>;
+    expect(tools).toHaveLength(2);
+    expect(tools[0].custom).toEqual({
+      name: "lookup",
+      description: "do a lookup",
+      input_schema: { type: "object" },
+    });
+    // Tool whose only custom field was the offending key drops the
+    // empty `custom` object entirely.
+    expect(tools[1]).toEqual({ type: "custom" });
+  });
 });
 
 // ---------------------------------------------------------------------------

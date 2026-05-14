@@ -62,6 +62,25 @@ function fixEmptyTextBlocks(messages) {
     return { ...m, content: fixed };
   });
 }
+function stripEagerInputStreaming(payload) {
+  const tools = payload.tools;
+  if (!Array.isArray(tools))
+    return;
+  for (const tool of tools) {
+    if (!tool || typeof tool !== "object")
+      continue;
+    const custom = tool.custom;
+    if (!custom || typeof custom !== "object")
+      continue;
+    const customRec = custom;
+    if (!("eager_input_streaming" in customRec))
+      continue;
+    delete customRec.eager_input_streaming;
+    if (Object.keys(customRec).length === 0) {
+      delete tool.custom;
+    }
+  }
+}
 function levelBudget(thinkingLevel) {
   switch (thinkingLevel) {
     case "minimal":
@@ -598,6 +617,7 @@ var frostclaw_default = definePluginEntry({
                       record.messages = fixTrailingAssistant(record.messages);
                       record.messages = fixEmptyTextBlocks(record.messages);
                     }
+                    stripEagerInputStreaming(record);
                     normalizeThinkingBudget(record, thinkingLevel);
                     clampMaxTokens(record);
                   }

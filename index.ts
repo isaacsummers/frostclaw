@@ -171,6 +171,7 @@ import {
   levelEffort,
   normalizeThinkingBudget,
   clampMaxTokens,
+  stripEagerInputStreaming,
   isClaudeModel,
 } from "./src/transforms.js";
 
@@ -828,6 +829,12 @@ export default definePluginEntry({
                     record.messages = fixTrailingAssistant(record.messages);
                     record.messages = fixEmptyTextBlocks(record.messages);
                   }
+                  // Defensive: strip `eager_input_streaming` from tool schemas.
+                  // The catalog sets supportsEagerToolInputStreaming: false to
+                  // prevent pi-ai's Anthropic provider from adding it, but we
+                  // also scrub it here so any future SDK regression or alternate
+                  // code path can't re-introduce a Cortex-fatal field.
+                  stripEagerInputStreaming(record);
                   normalizeThinkingBudget(record, thinkingLevel);
                   clampMaxTokens(record);
                 }

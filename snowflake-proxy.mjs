@@ -390,8 +390,48 @@ export function createProxyServer(config) {
     // ── POST /v1/messages ──────────────────────────────────────────────────
     if (req.method === "POST" && req.url === "/v1/messages") {
       try {
+        const rawBody = await readBody(req);
+        let body;
+        try {
+          body = JSON.parse(rawBody);
+        } catch {
+          body = null;
+        }
+
+        // Defensive scrub: drop `eager_input_streaming` from every tool's
+        // `custom` object. Snowflake Cortex's strict validator (Haiku 4.5 and
+        // other tiers) rejects the field with:
+        //   400 tools.0.custom.eager_input_streaming: Extra inputs are not
+        //       permitted
+        // The plugin's onPayload hook already handles this when frostclaw is
+        // in-process, but the standalone proxy may receive requests from any
+        // Anthropic SDK client that still emits the field. Strip it here so
+        // the proxy is safe regardless of caller. If the resulting `custom`
+        // object is empty, drop the key so we never forward `"custom": {}`.
+        let forwardBody = rawBody;
+        if (body !== null && typeof body === "object" && Array.isArray(body.tools)) {
+          let mutated = false;
+          for (const tool of body.tools) {
+            if (!tool || typeof tool !== "object") continue;
+            const custom = tool.custom;
+            if (!custom || typeof custom !== "object") continue;
+            if (!("eager_input_streaming" in custom)) continue;
+            delete custom.eager_input_streaming;
+            if (Object.keys(custom).length === 0) delete tool.custom;
+            mutated = true;
+          }
+          if (mutated) forwardBody = JSON.stringify(body);
+        }
+
+        const syntheticReq = {
+          headers: req.headers,
+          [Symbol.asyncIterator]: async function* () {
+            yield Buffer.from(forwardBody);
+          },
+        };
+
         await proxyRequest(
-          req,
+          syntheticReq,
           res,
           `${baseUrl}/api/v2/cortex/v1/messages`,
           { "anthropic-version": "2023-06-01" },

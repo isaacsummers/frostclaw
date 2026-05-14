@@ -4,6 +4,7 @@ import {
   fixEmptyTextBlocks,
   normalizeThinkingBudget,
   clampMaxTokens,
+  stripEagerInputStreaming,
   isClaudeModel,
   levelBudget,
   levelEffort,
@@ -240,4 +241,77 @@ describe("levelEffort", () => {
   test('"high" returns "high"', () => expect(levelEffort("high")).toBe("high"));
   test('"adaptive" returns "high"', () => expect(levelEffort("adaptive")).toBe("high"));
   test('undefined returns "high" (default)', () => expect(levelEffort(undefined)).toBe("high"));
+});
+
+// ---------------------------------------------------------------------------
+// stripEagerInputStreaming
+// ---------------------------------------------------------------------------
+
+describe("stripEagerInputStreaming", () => {
+  test("no tools field: no-op", () => {
+    const payload: Record<string, unknown> = { messages: [] };
+    stripEagerInputStreaming(payload);
+    expect(payload).toEqual({ messages: [] });
+  });
+
+  test("tools without custom: no-op", () => {
+    const payload: Record<string, unknown> = {
+      tools: [{ type: "bash_20250124", name: "bash" }],
+    };
+    stripEagerInputStreaming(payload);
+    expect(payload.tools).toEqual([{ type: "bash_20250124", name: "bash" }]);
+  });
+
+  test("tool with eager_input_streaming alongside other custom fields: field removed, custom kept", () => {
+    const payload: Record<string, unknown> = {
+      tools: [
+        {
+          type: "custom",
+          custom: {
+            name: "lookup",
+            description: "Look something up",
+            input_schema: { type: "object" },
+            eager_input_streaming: true,
+          },
+        },
+      ],
+    };
+    stripEagerInputStreaming(payload);
+    const tool = (payload.tools as Array<{ custom: Record<string, unknown> }>)[0];
+    expect(tool.custom).toEqual({
+      name: "lookup",
+      description: "Look something up",
+      input_schema: { type: "object" },
+    });
+  });
+
+  test("tool with only eager_input_streaming in custom: custom key dropped entirely", () => {
+    const payload: Record<string, unknown> = {
+      tools: [{ type: "custom", custom: { eager_input_streaming: true } }],
+    };
+    stripEagerInputStreaming(payload);
+    expect(payload.tools).toEqual([{ type: "custom" }]);
+  });
+
+  test("multiple tools: only ones carrying the field are touched", () => {
+    const payload: Record<string, unknown> = {
+      tools: [
+        { type: "custom", custom: { name: "a", eager_input_streaming: true } },
+        { type: "custom", custom: { name: "b" } },
+        { type: "custom", custom: { name: "c", eager_input_streaming: false } },
+      ],
+    };
+    stripEagerInputStreaming(payload);
+    expect(payload.tools).toEqual([
+      { type: "custom", custom: { name: "a" } },
+      { type: "custom", custom: { name: "b" } },
+      { type: "custom", custom: { name: "c" } },
+    ]);
+  });
+
+  test("non-array tools field: no-op", () => {
+    const payload: Record<string, unknown> = { tools: "not-an-array" };
+    stripEagerInputStreaming(payload);
+    expect(payload.tools).toBe("not-an-array");
+  });
 });
