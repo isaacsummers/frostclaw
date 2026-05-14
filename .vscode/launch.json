@@ -2,33 +2,21 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "type": "bun",
+      "type": "node",
       "request": "launch",
       "name": "Run tests",
-      "program": "bun",
-      "args": ["test"],
+      "runtimeExecutable": "/home/ubuntu/.local/share/mise/installs/bun/latest/bin/bun",
+      "runtimeArgs": ["test"],
       "cwd": "${workspaceFolder}",
-      "env": {},
-      "stopOnEntry": false,
-      "watchMode": false
-    },
-    {
-      "type": "bun",
-      "request": "launch",
-      "name": "Run tests (watch)",
-      "program": "bun",
-      "args": ["test", "--watch"],
-      "cwd": "${workspaceFolder}",
-      "env": {},
-      "stopOnEntry": false,
-      "watchMode": true
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
     },
     {
       "type": "node",
       "request": "launch",
-      "name": "Run tests (node fallback)",
+      "name": "Run tests (watch)",
       "runtimeExecutable": "/home/ubuntu/.local/share/mise/installs/bun/latest/bin/bun",
-      "runtimeArgs": ["test"],
+      "runtimeArgs": ["test", "--watch"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen"
