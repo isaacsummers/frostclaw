@@ -84,30 +84,82 @@ function assertConfig(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Anthropic beta headers — split into always-safe and conditional sets.
+// Anthropic beta headers (anthropic-beta) — Snowflake Cortex constraints.
 //
-// Snowflake Cortex rejects beta flags it hasn't activated with a 400 error
-// ("invalid beta flag"). We only send flags that are actually needed:
+// Snowflake Cortex docs: "Only Bedrock-compatible anthropic-beta header
+// values are supported." Cortex rejects unrecognized flags with a 400
+// ("invalid beta flag" / "provider rejected the request schema"), so the
+// matrix below tracks AWS Bedrock's published Anthropic beta flag list,
+// not the broader anthropic.com flag set.
 //
-//   BETA_ALWAYS  — broadly needed for all Claude calls (catalog headers)
-//   BETA_THINKING — only when the request uses extended thinking
-//   BETA_1M_FLAG — only for 1M context model variants
+// Per Anthropic's Claude 4+ migration guide, several flags we used to send
+// are now legacy or model-specific:
 //
-// Note: Snowflake Cortex keeps these as active beta headers even where
-// Anthropic has GA'd them. Use them as-is for Snowflake compatibility.
+//   output-128k-2025-02-19          DROPPED.
+//                                   Bedrock-listed for Claude 3.7 Sonnet only,
+//                                   where it gated 64K → 128K output. On all
+//                                   Claude 4+ models 128K output is native and
+//                                   driven purely by max_tokens in the body
+//                                   (catalog already sets maxTokens: 128_000).
+//                                   Migration guide explicitly says:
+//                                   "Remove ... output-128k-2025-02-19."
+//                                   Sending it to Haiku 4.5 (16K output cap)
+//                                   is meaningless. Drop universally.
+//
+//   token-efficient-tools-2025-02-19  DROPPED.
+//                                   Bedrock-listed for Claude 3.7 Sonnet only.
+//                                   On Claude 4+ token-efficient tool use is
+//                                   built into the model. Migration guide:
+//                                   "Remove ... token-efficient-tools-2025-02-19.
+//                                   All Claude 4+ models have built-in
+//                                   token-efficient tool use." Snowflake
+//                                   already rejects it for Haiku.
+//
+//   effort-2025-11-24                DROPPED.
+//                                   Bedrock-listed for Claude Opus 4.5 only.
+//                                   GA on Opus 4.6/4.7 (header now no-op there).
+//                                   We can't safely send Opus-only flags to
+//                                   the Sonnet/Haiku/3.7 catalog entries that
+//                                   share this code path; per-model gating
+//                                   would require a model-id list and the
+//                                   benefit (effort param on a single model
+//                                   tier) doesn't justify the surface area.
+//
+//   tool-examples-2025-10-29         DROPPED.
+//                                   Bedrock-listed for Claude Opus 4.5 only.
+//                                   Same reasoning as effort-2025-11-24:
+//                                   sending an Opus-only flag to Sonnet/
+//                                   Haiku/3.7 risks rejection on a strict
+//                                   provider, and the feature isn't wired
+//                                   into our request shape anyway.
+//
+//   interleaved-thinking-2025-05-14  KEPT, thinking-only.
+//                                   Bedrock-supported on Claude Sonnet 4.5
+//                                   and Claude Haiku 4.5 (and Opus 4 family).
+//                                   GA on Claude 4.6+ (header still accepted
+//                                   but no-op there). Adaptive thinking on
+//                                   Opus 4.7 turns it on automatically.
+//                                   Only meaningful when thinking is active,
+//                                   and only on reasoning-capable models —
+//                                   gated on both conditions below.
+//
+// Buckets:
+//   BETA_ALWAYS         — sent on every Claude request. Currently empty:
+//                         every legacy "always-safe" flag turned out to be
+//                         either model-specific or rendered redundant by the
+//                         body's max_tokens.
+//   BETA_THINKING       — sent only when extended thinking is active AND
+//                         model.reasoning === true. Haiku (reasoning:false)
+//                         and any other non-reasoning model never receive
+//                         these.
 // ---------------------------------------------------------------------------
 
-/** Flags safe to send on every Claude request */
-const BETA_ALWAYS = [
-  "output-128k-2025-02-19",
-  "token-efficient-tools-2025-02-19",
-];
+/** Flags safe to send on every Claude request. Empty by design — see comment above. */
+const BETA_ALWAYS: string[] = [];
 
-/** Flags that should only be sent when thinking is active */
+/** Flags sent only when extended thinking is active on a reasoning-capable model. */
 const BETA_THINKING = [
   "interleaved-thinking-2025-05-14",
-  "effort-2025-11-24",
-  "tool-examples-2025-10-29",
 ];
 
 
@@ -161,7 +213,7 @@ const CLAUDE_MODELS: CortexModelSpec[] = [
   { id: "claude-sonnet-4-6",                name: "Claude Sonnet 4.6",                reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-sonnet-4-5",                name: "Claude Sonnet 4.5",                reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-sonnet-4-5-long-context",   name: "Claude Sonnet 4.5 (Long Context)", reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-haiku-4-5",                 name: "Claude Haiku 4.5",                 reasoning: false, contextWindow: 200_000, maxTokens: 8_192,   input: ["text", "image"] },
+  { id: "claude-haiku-4-5",                 name: "Claude Haiku 4.5",                 reasoning: false, contextWindow: 200_000, maxTokens: 16_384,  input: ["text", "image"] },
   // Claude 3 family
   { id: "claude-3-7-sonnet",                name: "Claude 3.7 Sonnet",                reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
 ];
@@ -236,9 +288,14 @@ const COST_GPT41          = { input: 0.0000022,  output: 0.0000088,  cacheRead: 
 const COST_O4_MINI        = { input: 0.0000011,  output: 0.0000044,  cacheRead: 0.00000028, cacheWrite: 0 }; // $1.10/$4.40   | o4-mini
 
 /** Catalog-level beta headers — always-safe flags only. Thinking flags are
- *  added per-request in wrapStreamFn based on ctx.thinkingLevel. */
+ *  added per-request in wrapStreamFn based on ctx.thinkingLevel.
+ *  Returns an empty object when BETA_ALWAYS is empty so we don't attach a
+ *  blank `anthropic-beta` header (Snowflake's request schema validator
+ *  rejects empty header values on some Cortex builds). */
 function anthropicBetaHeaders(): Record<string, string> {
-  return { "anthropic-beta": BETA_ALWAYS.join(",") };
+  return BETA_ALWAYS.length > 0
+    ? { "anthropic-beta": BETA_ALWAYS.join(",") }
+    : {};
 }
 
 /** Map a Claude model ID to its cost tier */
@@ -709,12 +766,10 @@ export default definePluginEntry({
                 "anthropic-beta"
               ] ?? "";
             const betaFlags = catalogBeta ? [catalogBeta] : [];
-            // Only send thinking beta flags for models that support extended
-            // thinking (reasoning: true). Non-reasoning models like Haiku accept
-            // the BETA_ALWAYS headers fine but reject BETA_THINKING flags with a
-            // 400 even when the payload itself has no thinking field — OpenClaw
-            // core already skips the thinking field for reasoning:false models,
-            // but the headers are added here independently of the payload.
+            // Per-request, append BETA_THINKING only when extended thinking
+            // is active and the model is reasoning-capable. Catalog headers
+            // (BETA_ALWAYS) are seeded above; everything else lives here.
+            // Haiku 4.5 (reasoning:false) never receives thinking flags.
             const modelSupportsReasoning =
               (modelObj as { reasoning?: boolean } | undefined)?.reasoning === true;
             if (thinkingActive && modelSupportsReasoning) {

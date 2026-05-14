@@ -154,14 +154,9 @@ function logError(event, data) {
   const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
   console.error(line);
 }
-var BETA_ALWAYS = [
-  "output-128k-2025-02-19",
-  "token-efficient-tools-2025-02-19"
-];
+var BETA_ALWAYS = [];
 var BETA_THINKING = [
-  "interleaved-thinking-2025-05-14",
-  "effort-2025-11-24",
-  "tool-examples-2025-10-29"
+  "interleaved-thinking-2025-05-14"
 ];
 function modelSupportsTools(modelId) {
   return modelId.toLowerCase().startsWith("openai-");
@@ -175,7 +170,7 @@ var CLAUDE_MODELS = [
   { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-sonnet-4-5-long-context", name: "Claude Sonnet 4.5 (Long Context)", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
-  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", reasoning: false, contextWindow: 200000, maxTokens: 8192, input: ["text", "image"] },
+  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", reasoning: false, contextWindow: 200000, maxTokens: 16384, input: ["text", "image"] },
   { id: "claude-3-7-sonnet", name: "Claude 3.7 Sonnet", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] }
 ];
 var OPENAI_MODELS = [
@@ -223,7 +218,7 @@ var COST_GPT5_NANO = { input: 0.00000006, output: 0.00000044, cacheRead: 0.00000
 var COST_GPT41 = { input: 0.0000022, output: 0.0000088, cacheRead: 0.00000055, cacheWrite: 0 };
 var COST_O4_MINI = { input: 0.0000011, output: 0.0000044, cacheRead: 0.00000028, cacheWrite: 0 };
 function anthropicBetaHeaders() {
-  return { "anthropic-beta": BETA_ALWAYS.join(",") };
+  return BETA_ALWAYS.length > 0 ? { "anthropic-beta": BETA_ALWAYS.join(",") } : {};
 }
 function claudeCost(id) {
   if (id === "claude-4-opus")
