@@ -4,7 +4,7 @@ An [OpenClaw](https://github.com/openclaw/openclaw) provider plugin that routes 
 
 ## Features
 
-- **LLM Provider** — 16 models across Claude, GPT, Llama, Mistral, DeepSeek, and Arctic
+- **LLM Provider** — 33 models across Claude, GPT, Llama, Mistral, DeepSeek, and Snowflake
 - **Embedding Provider** — Snowflake Arctic Embed models for OpenClaw memory search
 - **Zero cost routing** — uses Snowflake credit-based billing (no per-token API fees)
 
@@ -12,38 +12,51 @@ An [OpenClaw](https://github.com/openclaw/openclaw) provider plugin that routes 
 
 ### Claude (Anthropic Messages API)
 
-| Model ID | Context | Notes |
-|----------|---------|-------|
-| `claude-opus-4-5` | 200k | |
-| `claude-sonnet-4-5` | 200k | |
-| `claude-opus-4-6` | 200k | |
-| `claude-sonnet-4-6` | 200k | |
-| `claude-opus-4-6-1m` | 1M | Opt-in via `context-1m` beta header |
-| `claude-sonnet-4-6-1m` | 1M | Opt-in via `context-1m` beta header |
-
-The `-1m` variants are virtual — the plugin strips the suffix before sending to Snowflake and attaches the `context-1m-2025-08-07` beta header automatically.
+| Model ID | Notes |
+|----------|-------|
+| `claude-4-opus` | Reasoning: adaptive |
+| `claude-opus-4-7` | Reasoning: adaptive |
+| `claude-opus-4-6` | Reasoning: adaptive |
+| `claude-opus-4-5` | Reasoning: adaptive |
+| `claude-4-sonnet` | Full reasoning levels |
+| `claude-sonnet-4-6` | Full reasoning levels |
+| `claude-sonnet-4-5` | Full reasoning levels |
+| `claude-sonnet-4-5-long-context` | Full reasoning levels |
+| `claude-haiku-4-5` | No reasoning |
+| `claude-3-7-sonnet` | Full reasoning levels |
 
 ### OpenAI (Chat Completions API)
 
-| Model ID | Context |
-|----------|---------|
-| `openai-gpt-5` | 128k |
-| `openai-gpt-5-mini` | 128k |
-| `openai-gpt-5-nano` | 128k |
-| `openai-gpt-4-1` | 1M |
+| Model ID | Context | Reasoning |
+|----------|---------|-----------|
+| `openai-gpt-5.5` | 128k | adaptive |
+| `openai-gpt-5.5-long-context` | 128k | adaptive |
+| `openai-gpt-5.4` | 128k | adaptive |
+| `openai-gpt-5.4-long-context` | 128k | adaptive |
+| `openai-gpt-5.2` | 128k | adaptive |
+| `openai-gpt-5.1` | 128k | adaptive |
+| `openai-gpt-5` | 128k | adaptive |
+| `openai-gpt-5-mini` | 128k | adaptive |
+| `openai-gpt-5-nano` | 128k | off only |
+| `openai-gpt-4.1` | 1M | off only |
+| `openai-o4-mini` | 128k | adaptive |
 
 ### Open-Source (Chat Completions API)
 
 | Model ID | Context |
 |----------|---------|
-| `llama4-maverick` | 1M |
+| `deepseek-r1` | 64k |
 | `llama3.1-405b` | 128k |
 | `llama3.1-70b` | 128k |
 | `llama3.1-8b` | 128k |
+| `llama3.2-1b` | 128k |
+| `llama3.2-3b` | 128k |
+| `llama3.3-70b` | 128k |
+| `llama4-maverick` | 1M |
 | `mistral-large` | 32k |
 | `mistral-large2` | 128k |
-| `deepseek-r1` | 64k |
-| `snowflake-arctic` | 4k |
+| `mistral-7b` | 32k |
+| `snowflake-llama-3.3-70b` | 128k |
 
 Tool calling is supported for Claude and OpenAI models. Open-source models have tools stripped automatically.
 

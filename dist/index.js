@@ -192,7 +192,20 @@ var OPENAI_MODELS = [
   { id: "openai-gpt-4.1", name: "GPT-4.1", reasoning: false, contextWindow: 1047576, maxTokens: 32768, input: ["text", "image"] },
   { id: "openai-o4-mini", name: "o4-mini", reasoning: true, contextWindow: 128000, maxTokens: 32768, input: ["text", "image"] }
 ];
-var OPEN_SOURCE_MODELS = [];
+var OPEN_SOURCE_MODELS = [
+  { id: "deepseek-r1", name: "DeepSeek R1", reasoning: false, contextWindow: 64000, maxTokens: 16384, input: ["text"] },
+  { id: "llama3.1-405b", name: "Llama 3.1 405B", reasoning: false, contextWindow: 128000, maxTokens: 32768, input: ["text"] },
+  { id: "llama3.1-70b", name: "Llama 3.1 70B", reasoning: false, contextWindow: 128000, maxTokens: 32768, input: ["text"] },
+  { id: "llama3.1-8b", name: "Llama 3.1 8B", reasoning: false, contextWindow: 128000, maxTokens: 32768, input: ["text"] },
+  { id: "llama3.2-1b", name: "Llama 3.2 1B", reasoning: false, contextWindow: 128000, maxTokens: 16384, input: ["text"] },
+  { id: "llama3.2-3b", name: "Llama 3.2 3B", reasoning: false, contextWindow: 128000, maxTokens: 16384, input: ["text"] },
+  { id: "llama3.3-70b", name: "Llama 3.3 70B", reasoning: false, contextWindow: 128000, maxTokens: 32768, input: ["text"] },
+  { id: "llama4-maverick", name: "Llama 4 Maverick", reasoning: false, contextWindow: 1047576, maxTokens: 32768, input: ["text"] },
+  { id: "mistral-large", name: "Mistral Large", reasoning: false, contextWindow: 32000, maxTokens: 8192, input: ["text"] },
+  { id: "mistral-large2", name: "Mistral Large 2", reasoning: false, contextWindow: 128000, maxTokens: 32768, input: ["text"] },
+  { id: "mistral-7b", name: "Mistral 7B", reasoning: false, contextWindow: 32000, maxTokens: 8192, input: ["text"] },
+  { id: "snowflake-llama-3.3-70b", name: "Snowflake Llama 3.3 70B", reasoning: false, contextWindow: 128000, maxTokens: 32768, input: ["text"] }
+];
 var COST_CLAUDE_4_OPUS = { input: 0.000015, output: 0.000075, cacheRead: 0.0000015, cacheWrite: 0.00001875 };
 var COST_OPUS = { input: 0.0000055, output: 0.0000275, cacheRead: 0.00000055, cacheWrite: 0.000006875 };
 var COST_SONNET = { input: 0.0000033, output: 0.0000165, cacheRead: 0.00000033, cacheWrite: 0.000004125 };
@@ -288,8 +301,42 @@ function buildOpenAIModelDef(spec) {
     }
   };
 }
-function openSourceCost(_id) {
-  return COST_GPT51;
+var COST_DEEPSEEK_R1 = { input: 0.00000135, output: 0.0000054, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA_405B = { input: 0.0000024, output: 0.0000024, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA_70B = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA_8B = { input: 0.00000022, output: 0.00000022, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA_1B = { input: 0.0000001, output: 0.0000001, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA_3B = { input: 0.00000015, output: 0.00000015, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA4_MAV = { input: 0.00000024, output: 0.00000097, cacheRead: 0, cacheWrite: 0 };
+var COST_MISTRAL_LG = { input: 0.000004, output: 0.000012, cacheRead: 0, cacheWrite: 0 };
+var COST_MISTRAL_LG2 = { input: 0.000002, output: 0.000006, cacheRead: 0, cacheWrite: 0 };
+var COST_MISTRAL_7B = { input: 0.00000015, output: 0.0000002, cacheRead: 0, cacheWrite: 0 };
+function openSourceCost(id) {
+  if (id === "deepseek-r1")
+    return COST_DEEPSEEK_R1;
+  if (id === "llama3.1-405b")
+    return COST_LLAMA_405B;
+  if (id === "llama3.1-70b")
+    return COST_LLAMA_70B;
+  if (id === "llama3.1-8b")
+    return COST_LLAMA_8B;
+  if (id === "llama3.2-1b")
+    return COST_LLAMA_1B;
+  if (id === "llama3.2-3b")
+    return COST_LLAMA_3B;
+  if (id === "llama3.3-70b")
+    return COST_LLAMA_70B;
+  if (id === "llama4-maverick")
+    return COST_LLAMA4_MAV;
+  if (id === "mistral-large")
+    return COST_MISTRAL_LG;
+  if (id === "mistral-large2")
+    return COST_MISTRAL_LG2;
+  if (id === "mistral-7b")
+    return COST_MISTRAL_7B;
+  if (id === "snowflake-llama-3.3-70b")
+    return COST_LLAMA_70B;
+  return COST_LLAMA_70B;
 }
 function buildOpenSourceModelDef(spec) {
   return {

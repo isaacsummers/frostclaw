@@ -363,9 +363,20 @@ const OPENAI_MODELS: CortexModelSpec[] = [
   { id: "openai-o4-mini",              name: "o4-mini",                reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
 ];
 
-// No open-source models in the current Snowflake pricing table (2026-05).
-// Dynamic model resolution handles any future additions via resolveDynamicModel.
-const OPEN_SOURCE_MODELS: CortexModelSpec[] = [];
+const OPEN_SOURCE_MODELS: CortexModelSpec[] = [
+  { id: "deepseek-r1",              name: "DeepSeek R1",                reasoning: false, contextWindow: 64_000,     maxTokens: 16_384, input: ["text"] },
+  { id: "llama3.1-405b",            name: "Llama 3.1 405B",            reasoning: false, contextWindow: 128_000,    maxTokens: 32_768, input: ["text"] },
+  { id: "llama3.1-70b",             name: "Llama 3.1 70B",             reasoning: false, contextWindow: 128_000,    maxTokens: 32_768, input: ["text"] },
+  { id: "llama3.1-8b",              name: "Llama 3.1 8B",              reasoning: false, contextWindow: 128_000,    maxTokens: 32_768, input: ["text"] },
+  { id: "llama3.2-1b",              name: "Llama 3.2 1B",              reasoning: false, contextWindow: 128_000,    maxTokens: 16_384, input: ["text"] },
+  { id: "llama3.2-3b",              name: "Llama 3.2 3B",              reasoning: false, contextWindow: 128_000,    maxTokens: 16_384, input: ["text"] },
+  { id: "llama3.3-70b",             name: "Llama 3.3 70B",             reasoning: false, contextWindow: 128_000,    maxTokens: 32_768, input: ["text"] },
+  { id: "llama4-maverick",          name: "Llama 4 Maverick",          reasoning: false, contextWindow: 1_047_576,  maxTokens: 32_768, input: ["text"] },
+  { id: "mistral-large",            name: "Mistral Large",             reasoning: false, contextWindow: 32_000,     maxTokens: 8_192,  input: ["text"] },
+  { id: "mistral-large2",           name: "Mistral Large 2",           reasoning: false, contextWindow: 128_000,    maxTokens: 32_768, input: ["text"] },
+  { id: "mistral-7b",               name: "Mistral 7B",                reasoning: false, contextWindow: 32_000,     maxTokens: 8_192,  input: ["text"] },
+  { id: "snowflake-llama-3.3-70b",  name: "Snowflake Llama 3.3 70B",  reasoning: false, contextWindow: 128_000,    maxTokens: 32_768, input: ["text"] },
+];
 
 // ---------------------------------------------------------------------------
 // Cost per token (USD) — sourced from Snowflake Service Consumption Table
@@ -481,11 +492,33 @@ function buildOpenAIModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
   };
 }
 
+// Open-source model costs (Table 6c — no cache columns)
+const COST_DEEPSEEK_R1  = { input: 0.00000135,  output: 0.0000054,   cacheRead: 0, cacheWrite: 0 }; // $1.35/$5.40
+const COST_LLAMA_405B   = { input: 0.0000024,   output: 0.0000024,   cacheRead: 0, cacheWrite: 0 }; // $2.40/$2.40
+const COST_LLAMA_70B    = { input: 0.00000072,  output: 0.00000072,  cacheRead: 0, cacheWrite: 0 }; // $0.72/$0.72
+const COST_LLAMA_8B     = { input: 0.00000022,  output: 0.00000022,  cacheRead: 0, cacheWrite: 0 }; // $0.22/$0.22
+const COST_LLAMA_1B     = { input: 0.0000001,   output: 0.0000001,   cacheRead: 0, cacheWrite: 0 }; // $0.10/$0.10
+const COST_LLAMA_3B     = { input: 0.00000015,  output: 0.00000015,  cacheRead: 0, cacheWrite: 0 }; // $0.15/$0.15
+const COST_LLAMA4_MAV   = { input: 0.00000024,  output: 0.00000097,  cacheRead: 0, cacheWrite: 0 }; // $0.24/$0.97
+const COST_MISTRAL_LG   = { input: 0.000004,    output: 0.000012,    cacheRead: 0, cacheWrite: 0 }; // $4.00/$12.00
+const COST_MISTRAL_LG2  = { input: 0.000002,    output: 0.000006,    cacheRead: 0, cacheWrite: 0 }; // $2.00/$6.00
+const COST_MISTRAL_7B   = { input: 0.00000015,  output: 0.0000002,   cacheRead: 0, cacheWrite: 0 }; // $0.15/$0.20
+
 /** Map an open-source model ID to its cost tier */
-function openSourceCost(_id: string): typeof COST_GPT51 {
-  // No open-source models in current catalog; fallback to a mid-tier rate
-  // so dynamic model resolution doesn't silently bill at zero.
-  return COST_GPT51;
+function openSourceCost(id: string): typeof COST_LLAMA_70B {
+  if (id === "deepseek-r1")             return COST_DEEPSEEK_R1;
+  if (id === "llama3.1-405b")           return COST_LLAMA_405B;
+  if (id === "llama3.1-70b")            return COST_LLAMA_70B;
+  if (id === "llama3.1-8b")             return COST_LLAMA_8B;
+  if (id === "llama3.2-1b")             return COST_LLAMA_1B;
+  if (id === "llama3.2-3b")             return COST_LLAMA_3B;
+  if (id === "llama3.3-70b")            return COST_LLAMA_70B;
+  if (id === "llama4-maverick")         return COST_LLAMA4_MAV;
+  if (id === "mistral-large")           return COST_MISTRAL_LG;
+  if (id === "mistral-large2")          return COST_MISTRAL_LG2;
+  if (id === "mistral-7b")              return COST_MISTRAL_7B;
+  if (id === "snowflake-llama-3.3-70b") return COST_LLAMA_70B;
+  return COST_LLAMA_70B; // fallback
 }
 
 function buildOpenSourceModelDef(spec: CortexModelSpec): ModelDefinitionConfig {

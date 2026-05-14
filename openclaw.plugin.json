@@ -1,7 +1,7 @@
 {
   "id": "snowflake-cortex",
   "name": "Snowflake Cortex",
-  "description": "Snowflake Cortex AI provider \u2014 routes Claude models to the Anthropic Messages API and all others to Chat Completions. PAT auth.",
+  "description": "Snowflake Cortex AI provider — routes Claude models to the Anthropic Messages API and all others to Chat Completions. PAT auth.",
   "providers": [
     "snowflake-cortex"
   ],
@@ -13,56 +13,201 @@
       "snowflake-cortex": {
         "models": [
           {
+            "id": "claude-4-opus",
+            "compat": {
+              "supportedReasoningEfforts": ["off", "adaptive"]
+            }
+          },
+          {
             "id": "claude-opus-4-7",
             "compat": {
-              "supportedReasoningEfforts": [
-                "off",
-                "adaptive"
-              ]
+              "supportedReasoningEfforts": ["off", "adaptive"]
             }
           },
           {
             "id": "claude-opus-4-6",
             "compat": {
-              "supportedReasoningEfforts": [
-                "off",
-                "adaptive"
-              ]
+              "supportedReasoningEfforts": ["off", "adaptive"]
             }
           },
           {
             "id": "claude-opus-4-5",
             "compat": {
-              "supportedReasoningEfforts": [
-                "off",
-                "adaptive"
-              ]
+              "supportedReasoningEfforts": ["off", "adaptive"]
+            }
+          },
+          {
+            "id": "claude-4-sonnet",
+            "compat": {
+              "supportedReasoningEfforts": ["off", "minimal", "low", "medium", "high", "adaptive"]
             }
           },
           {
             "id": "claude-sonnet-4-6",
             "compat": {
-              "supportedReasoningEfforts": [
-                "off",
-                "minimal",
-                "low",
-                "medium",
-                "high",
-                "adaptive"
-              ]
+              "supportedReasoningEfforts": ["off", "minimal", "low", "medium", "high", "adaptive"]
             }
           },
           {
             "id": "claude-sonnet-4-5",
             "compat": {
-              "supportedReasoningEfforts": [
-                "off",
-                "minimal",
-                "low",
-                "medium",
-                "high",
-                "adaptive"
-              ]
+              "supportedReasoningEfforts": ["off", "minimal", "low", "medium", "high", "adaptive"]
+            }
+          },
+          {
+            "id": "claude-sonnet-4-5-long-context",
+            "compat": {
+              "supportedReasoningEfforts": ["off", "minimal", "low", "medium", "high", "adaptive"]
+            }
+          },
+          {
+            "id": "claude-haiku-4-5",
+            "compat": {
+              "supportedReasoningEfforts": ["off"]
+            }
+          },
+          {
+            "id": "claude-3-7-sonnet",
+            "compat": {
+              "supportedReasoningEfforts": ["off", "minimal", "low", "medium", "high", "adaptive"]
+            }
+          },
+          {
+            "id": "openai-gpt-5.5",
+            "compat": {
+              "supportedReasoningEfforts": ["off", "adaptive"]
+            }
+          },
+          {
+            "id": "openai-gpt-5.5-long-context",
+            "compat": {
+              "supportedReasoningEfforts": ["off", "adaptive"]
+            }
+          },
+          {
+            "id": "openai-gpt-5.4",
+            "compat": {
+              "supportedReasoningEfforts": ["off", "adaptive"]
+            }
+          },
+          {
+            "id": "openai-gpt-5.4-long-context",
+            "compat": {
+              "supportedReasoningEfforts": ["off", "adaptive"]
+            }
+          },
+          {
+            "id": "openai-gpt-5.2",
+            "compat": {
+              "supportedReasoningEfforts": ["off", "adaptive"]
+            }
+          },
+          {
+            "id": "openai-gpt-5.1",
+            "compat": {
+              "supportedReasoningEfforts": ["off", "adaptive"]
+            }
+          },
+          {
+            "id": "openai-gpt-5",
+            "compat": {
+              "supportedReasoningEfforts": ["off", "adaptive"]
+            }
+          },
+          {
+            "id": "openai-gpt-5-mini",
+            "compat": {
+              "supportedReasoningEfforts": ["off", "adaptive"]
+            }
+          },
+          {
+            "id": "openai-gpt-5-nano",
+            "compat": {
+              "supportedReasoningEfforts": ["off"]
+            }
+          },
+          {
+            "id": "openai-gpt-4.1",
+            "compat": {
+              "supportedReasoningEfforts": ["off"]
+            }
+          },
+          {
+            "id": "openai-o4-mini",
+            "compat": {
+              "supportedReasoningEfforts": ["off", "adaptive"]
+            }
+          },
+          {
+            "id": "deepseek-r1",
+            "compat": {
+              "supportedReasoningEfforts": ["off"]
+            }
+          },
+          {
+            "id": "llama3.1-405b",
+            "compat": {
+              "supportedReasoningEfforts": ["off"]
+            }
+          },
+          {
+            "id": "llama3.1-70b",
+            "compat": {
+              "supportedReasoningEfforts": ["off"]
+            }
+          },
+          {
+            "id": "llama3.1-8b",
+            "compat": {
+              "supportedReasoningEfforts": ["off"]
+            }
+          },
+          {
+            "id": "llama3.2-1b",
+            "compat": {
+              "supportedReasoningEfforts": ["off"]
+            }
+          },
+          {
+            "id": "llama3.2-3b",
+            "compat": {
+              "supportedReasoningEfforts": ["off"]
+            }
+          },
+          {
+            "id": "llama3.3-70b",
+            "compat": {
+              "supportedReasoningEfforts": ["off"]
+            }
+          },
+          {
+            "id": "llama4-maverick",
+            "compat": {
+              "supportedReasoningEfforts": ["off"]
+            }
+          },
+          {
+            "id": "mistral-large",
+            "compat": {
+              "supportedReasoningEfforts": ["off"]
+            }
+          },
+          {
+            "id": "mistral-large2",
+            "compat": {
+              "supportedReasoningEfforts": ["off"]
+            }
+          },
+          {
+            "id": "mistral-7b",
+            "compat": {
+              "supportedReasoningEfforts": ["off"]
+            }
+          },
+          {
+            "id": "snowflake-llama-3.3-70b",
+            "compat": {
+              "supportedReasoningEfforts": ["off"]
             }
           }
         ]
