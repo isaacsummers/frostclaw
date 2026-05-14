@@ -249,7 +249,7 @@ function buildClaudeModelDef(spec) {
     contextWindow: spec.contextWindow,
     maxTokens: spec.maxTokens,
     headers: anthropicBetaHeaders(),
-    compat: { supportsTools: true }
+    compat: { supportsTools: true, supportsEagerToolInputStreaming: false }
   };
 }
 function openaiCost(id) {

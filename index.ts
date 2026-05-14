@@ -327,7 +327,7 @@ function buildClaudeModelDef(spec: CortexModelSpec): ModelDefinitionConfig {
     contextWindow: spec.contextWindow,
     maxTokens: spec.maxTokens,
     headers: anthropicBetaHeaders(),
-    compat: { supportsTools: true },
+    compat: { supportsTools: true, supportsEagerToolInputStreaming: false },
   };
 }
 
