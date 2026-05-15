@@ -859,9 +859,13 @@ export default definePluginEntry({
                   normalizeThinkingBudget(record, thinkingLevel);
                   clampMaxTokens(record);
                 }
-                return (originalOnPayload as
+                const chained = (originalOnPayload as
                   | ((p: unknown, m: unknown) => unknown)
                   | undefined)?.(payload, payloadModel);
+                // Must return the (possibly mutated) payload so OpenClaw
+                // uses it. If a chained handler returned something, prefer
+                // that; otherwise return our mutated payload directly.
+                return chained !== undefined ? chained : payload;
               },
             };
             const streamResult = inner(model, context, merged as typeof options);

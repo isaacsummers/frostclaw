@@ -631,7 +631,8 @@ var frostclaw_default = definePluginEntry({
                     normalizeThinkingBudget(record, thinkingLevel);
                     clampMaxTokens(record);
                   }
-                  return originalOnPayload?.(payload, payloadModel);
+                  const chained = originalOnPayload?.(payload, payloadModel);
+                  return chained !== undefined ? chained : payload;
                 }
               };
               const streamResult = inner(model, context, merged);
