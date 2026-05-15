@@ -681,7 +681,20 @@ export default definePluginEntry({
       // -----------------------------------------------------------------------
       normalizeToolSchemas(ctx: ProviderNormalizeToolSchemasContext) {
         if (!ctx.modelId) return ctx.tools;
-        if (isClaudeModel(ctx.modelId)) return ctx.tools;  // handled by Anthropic API
+        if (isClaudeModel(ctx.modelId)) {
+          // Strip eager_input_streaming from tool schemas — Snowflake Cortex
+          // rejects this field on Haiku (and may reject it on Sonnet in future).
+          // OpenClaw never consumes this field client-side (FGTS uses the beta
+          // header, not the per-tool field), so stripping is always safe.
+          return ctx.tools.map((tool: Record<string, unknown>) => {
+            const custom = tool.custom as Record<string, unknown> | undefined;
+            if (!custom || !("eager_input_streaming" in custom)) return tool;
+            const { eager_input_streaming: _dropped, ...rest } = custom;
+            if (Object.keys(rest).length > 0) return { ...tool, custom: rest };
+            const { custom: _c, ...toolWithoutCustom } = tool;
+            return toolWithoutCustom;
+          });
+        }
         if (!modelSupportsTools(ctx.modelId)) return [];
         return ctx.tools;
       },

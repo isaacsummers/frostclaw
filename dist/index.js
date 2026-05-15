@@ -532,8 +532,18 @@ var frostclaw_default = definePluginEntry({
         normalizeToolSchemas(ctx) {
           if (!ctx.modelId)
             return ctx.tools;
-          if (isClaudeModel(ctx.modelId))
-            return ctx.tools;
+          if (isClaudeModel(ctx.modelId)) {
+            return ctx.tools.map((tool) => {
+              const custom = tool.custom;
+              if (!custom || !("eager_input_streaming" in custom))
+                return tool;
+              const { eager_input_streaming: _dropped, ...rest } = custom;
+              if (Object.keys(rest).length > 0)
+                return { ...tool, custom: rest };
+              const { custom: _c, ...toolWithoutCustom } = tool;
+              return toolWithoutCustom;
+            });
+          }
           if (!modelSupportsTools(ctx.modelId))
             return [];
           return ctx.tools;
