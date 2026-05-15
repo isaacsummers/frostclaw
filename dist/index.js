@@ -154,7 +154,7 @@ function getApiKey() {
   return process.env.SNOWFLAKE_CORTEX_API_KEY ?? process.env.SNOWFLAKE_PAT ?? "";
 }
 function getBaseURL() {
-  return process.env.SNOWFLAKE_BASE_URL ?? "";
+  return process.env.SNOWFLAKE_PROXY_BASE_URL ?? process.env.SNOWFLAKE_BASE_URL ?? "";
 }
 var DEBUG_ENABLED = (() => {
   const v = process.env.FROSTCLAW_DEBUG;

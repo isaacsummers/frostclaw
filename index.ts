@@ -31,13 +31,21 @@ import type {
 
 // ---------------------------------------------------------------------------
 // Environment — lazy getters so env vars are read at call time, not import time
+//
+// Recognized variables:
+//   SNOWFLAKE_CORTEX_API_KEY / SNOWFLAKE_PAT — Snowflake PAT used for auth
+//   SNOWFLAKE_BASE_URL — Snowflake account URL (e.g. https://<acct>.snowflakecomputing.com)
+//   SNOWFLAKE_PROXY_BASE_URL — optional; if set, overrides SNOWFLAKE_BASE_URL
+//     as the LLM request target (use to route through the local proxy at
+//     http://127.0.0.1:18790). The proxy itself still uses SNOWFLAKE_BASE_URL
+//     for its outbound Snowflake target.
 // ---------------------------------------------------------------------------
 
 function getApiKey(): string {
   return process.env.SNOWFLAKE_CORTEX_API_KEY ?? process.env.SNOWFLAKE_PAT ?? "";
 }
 function getBaseURL(): string {
-  return process.env.SNOWFLAKE_BASE_URL ?? "";
+  return process.env.SNOWFLAKE_PROXY_BASE_URL ?? process.env.SNOWFLAKE_BASE_URL ?? "";
 }
 
 // ---------------------------------------------------------------------------
