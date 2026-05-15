@@ -18,10 +18,17 @@
  *
  * Endpoint: ${SNOWFLAKE_BASE_URL}/api/v2/cortex/v1/messages
  *
- * Run: bun test tests/eager-input-streaming.live.test.ts
+ * Run: bun test tests/live/eager-input-streaming.live.test.ts
  *
  * Skips automatically if credentials are not set.
  */
+
+// ---------------------------------------------------------------------------
+// ACCEPTANCE TESTS — these make real HTTP calls to Snowflake Cortex.
+// They test Snowflake's validator behaviour, NOT frostclaw's internal logic.
+// Run separately: bun test tests/live/  (requires SNOWFLAKE_BASE_URL + creds)
+// Do NOT run as part of CI or the standard `bun test` suite.
+// ---------------------------------------------------------------------------
 
 import { describe, test, expect } from "bun:test";
 

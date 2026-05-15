@@ -19,10 +19,17 @@
  *   4. tool-examples-2025-10-29                          (accept vs reject)
  *   5. Each flag individually on Haiku 4.5               (which 400)
  *
- * Run: bun test tests/beta-headers.live.test.ts
+ * Run: bun test tests/live/beta-headers.live.test.ts
  *
  * Skips automatically if credentials are not set.
  */
+
+// ---------------------------------------------------------------------------
+// ACCEPTANCE TESTS — these make real HTTP calls to Snowflake Cortex.
+// They test Snowflake's validator behaviour, NOT frostclaw's internal logic.
+// Run separately: bun test tests/live/  (requires SNOWFLAKE_BASE_URL + creds)
+// Do NOT run as part of CI or the standard `bun test` suite.
+// ---------------------------------------------------------------------------
 
 import { describe, test, expect } from "bun:test";
 
