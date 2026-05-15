@@ -149,36 +149,13 @@ function isClaudeModel(modelId) {
   return modelId.toLowerCase().startsWith("claude");
 }
 
-// index.ts
-function getApiKey() {
-  return process.env.SNOWFLAKE_CORTEX_API_KEY ?? process.env.SNOWFLAKE_PAT ?? "";
-}
-function getBaseURL() {
+// src/catalog.ts
+function getCatalogBaseURL() {
   return process.env.SNOWFLAKE_PROXY_BASE_URL ?? process.env.SNOWFLAKE_BASE_URL ?? "";
 }
-var DEBUG_ENABLED = (() => {
-  const v = process.env.FROSTCLAW_DEBUG;
-  if (!v)
-    return false;
-  const s = v.toLowerCase();
-  return s !== "0" && s !== "false" && s !== "off" && s !== "";
-})();
-function log(event, data) {
-  if (!DEBUG_ENABLED)
-    return;
-  const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
-  console.error(line);
-}
-function logError(event, data) {
-  const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
-  console.error(line);
-}
 var BETA_ALWAYS = [];
-var BETA_THINKING = [
-  "interleaved-thinking-2025-05-14"
-];
-function modelSupportsTools(modelId) {
-  return modelId.toLowerCase().startsWith("openai-");
+function anthropicBetaHeaders() {
+  return BETA_ALWAYS.length > 0 ? { "anthropic-beta": BETA_ALWAYS.join(",") } : {};
 }
 var CLAUDE_MODELS = [
   { id: "claude-4-opus", name: "Claude 4 Opus", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
@@ -236,9 +213,16 @@ var COST_GPT5_MINI = { input: 0.00000028, output: 0.0000022, cacheRead: 0.000000
 var COST_GPT5_NANO = { input: 0.00000006, output: 0.00000044, cacheRead: 0.000000006, cacheWrite: 0 };
 var COST_GPT41 = { input: 0.0000022, output: 0.0000088, cacheRead: 0.00000055, cacheWrite: 0 };
 var COST_O4_MINI = { input: 0.0000011, output: 0.0000044, cacheRead: 0.00000028, cacheWrite: 0 };
-function anthropicBetaHeaders() {
-  return BETA_ALWAYS.length > 0 ? { "anthropic-beta": BETA_ALWAYS.join(",") } : {};
-}
+var COST_DEEPSEEK_R1 = { input: 0.00000135, output: 0.0000054, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA_405B = { input: 0.0000024, output: 0.0000024, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA_70B = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA_8B = { input: 0.00000022, output: 0.00000022, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA_1B = { input: 0.0000001, output: 0.0000001, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA_3B = { input: 0.00000015, output: 0.00000015, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA4_MAV = { input: 0.00000024, output: 0.00000097, cacheRead: 0, cacheWrite: 0 };
+var COST_MISTRAL_LG = { input: 0.000004, output: 0.000012, cacheRead: 0, cacheWrite: 0 };
+var COST_MISTRAL_LG2 = { input: 0.000002, output: 0.000006, cacheRead: 0, cacheWrite: 0 };
+var COST_MISTRAL_7B = { input: 0.00000015, output: 0.0000002, cacheRead: 0, cacheWrite: 0 };
 function claudeCost(id) {
   if (id === "claude-4-opus")
     return COST_CLAUDE_4_OPUS;
@@ -256,12 +240,13 @@ function claudeCost(id) {
     return COST_HAIKU;
   return COST_OPUS;
 }
-function buildClaudeModelDef(spec) {
+function buildClaudeModelDef(spec, baseURL) {
+  const url = baseURL ?? getCatalogBaseURL();
   return {
     id: spec.id,
     name: spec.name,
     api: "anthropic-messages",
-    baseUrl: `${getBaseURL()}/api/v2/cortex`,
+    baseUrl: url,
     reasoning: spec.reasoning,
     input: spec.input,
     cost: claudeCost(spec.id),
@@ -296,12 +281,13 @@ function openaiCost(id) {
     return COST_O4_MINI;
   return COST_GPT51;
 }
-function buildOpenAIModelDef(spec) {
+function buildOpenAIModelDef(spec, baseURL) {
+  const url = baseURL ?? getCatalogBaseURL();
   return {
     id: spec.id,
     name: spec.name,
     api: "openai-completions",
-    baseUrl: `${getBaseURL()}/api/v2/cortex`,
+    baseUrl: url,
     reasoning: spec.reasoning,
     input: spec.input,
     cost: openaiCost(spec.id),
@@ -314,16 +300,6 @@ function buildOpenAIModelDef(spec) {
     }
   };
 }
-var COST_DEEPSEEK_R1 = { input: 0.00000135, output: 0.0000054, cacheRead: 0, cacheWrite: 0 };
-var COST_LLAMA_405B = { input: 0.0000024, output: 0.0000024, cacheRead: 0, cacheWrite: 0 };
-var COST_LLAMA_70B = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 };
-var COST_LLAMA_8B = { input: 0.00000022, output: 0.00000022, cacheRead: 0, cacheWrite: 0 };
-var COST_LLAMA_1B = { input: 0.0000001, output: 0.0000001, cacheRead: 0, cacheWrite: 0 };
-var COST_LLAMA_3B = { input: 0.00000015, output: 0.00000015, cacheRead: 0, cacheWrite: 0 };
-var COST_LLAMA4_MAV = { input: 0.00000024, output: 0.00000097, cacheRead: 0, cacheWrite: 0 };
-var COST_MISTRAL_LG = { input: 0.000004, output: 0.000012, cacheRead: 0, cacheWrite: 0 };
-var COST_MISTRAL_LG2 = { input: 0.000002, output: 0.000006, cacheRead: 0, cacheWrite: 0 };
-var COST_MISTRAL_7B = { input: 0.00000015, output: 0.0000002, cacheRead: 0, cacheWrite: 0 };
 function openSourceCost(id) {
   if (id === "deepseek-r1")
     return COST_DEEPSEEK_R1;
@@ -351,12 +327,13 @@ function openSourceCost(id) {
     return COST_LLAMA_70B;
   return COST_LLAMA_70B;
 }
-function buildOpenSourceModelDef(spec) {
+function buildOpenSourceModelDef(spec, baseURL) {
+  const url = baseURL ?? getCatalogBaseURL();
   return {
     id: spec.id,
     name: spec.name,
     api: "openai-completions",
-    baseUrl: `${getBaseURL()}/api/v2/cortex`,
+    baseUrl: url,
     reasoning: spec.reasoning,
     input: spec.input,
     cost: openSourceCost(spec.id),
@@ -372,14 +349,14 @@ function buildOpenSourceModelDef(spec) {
 var CATALOG_CACHE;
 var CATALOG_INDEX;
 function buildModelCatalog() {
-  const baseURL = getBaseURL();
+  const baseURL = getCatalogBaseURL();
   if (CATALOG_CACHE && CATALOG_CACHE.baseURL === baseURL) {
     return CATALOG_CACHE.catalog;
   }
   const catalog = [
-    ...CLAUDE_MODELS.map(buildClaudeModelDef),
-    ...OPENAI_MODELS.map(buildOpenAIModelDef),
-    ...OPEN_SOURCE_MODELS.map(buildOpenSourceModelDef)
+    ...CLAUDE_MODELS.map((s) => buildClaudeModelDef(s, baseURL)),
+    ...OPENAI_MODELS.map((s) => buildOpenAIModelDef(s, baseURL)),
+    ...OPEN_SOURCE_MODELS.map((s) => buildOpenSourceModelDef(s, baseURL))
   ];
   CATALOG_CACHE = { baseURL, catalog };
   CATALOG_INDEX = new Map(catalog.map((m) => [m.id, m]));
@@ -390,6 +367,37 @@ function findCatalogEntry(modelId) {
   if (!CATALOG_INDEX)
     buildModelCatalog();
   return CATALOG_INDEX?.get(bareId);
+}
+
+// index.ts
+function getApiKey() {
+  return process.env.SNOWFLAKE_CORTEX_API_KEY ?? process.env.SNOWFLAKE_PAT ?? "";
+}
+function getBaseURL() {
+  return process.env.SNOWFLAKE_PROXY_BASE_URL ?? process.env.SNOWFLAKE_BASE_URL ?? "";
+}
+var DEBUG_ENABLED = (() => {
+  const v = process.env.FROSTCLAW_DEBUG;
+  if (!v)
+    return false;
+  const s = v.toLowerCase();
+  return s !== "0" && s !== "false" && s !== "off" && s !== "";
+})();
+function log(event, data) {
+  if (!DEBUG_ENABLED)
+    return;
+  const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
+  console.error(line);
+}
+function logError(event, data) {
+  const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
+  console.error(line);
+}
+var BETA_THINKING = [
+  "interleaved-thinking-2025-05-14"
+];
+function modelSupportsTools(modelId) {
+  return modelId.toLowerCase().startsWith("openai-");
 }
 var DEFAULT_SNOWFLAKE_EMBED_MODEL = "snowflake-arctic-embed-m-v1.5";
 async function snowflakeEmbed(texts, model) {
@@ -489,7 +497,7 @@ var frostclaw_default = definePluginEntry({
               log("catalog.run returning catalog", { modelCount: models.length });
               return {
                 provider: {
-                  baseUrl: `${baseURL}/api/v2/cortex`,
+                  baseUrl: baseURL,
                   apiKey: resolvedKey,
                   api: "openai-completions",
                   authHeader: true,
@@ -525,7 +533,7 @@ var frostclaw_default = definePluginEntry({
           const claude = isClaudeModel(modelId);
           const api2 = claude ? "anthropic-messages" : "openai-completions";
           const input = claude ? ["text", "image"] : ["text"];
-          const baseUrl = `${getBaseURL()}/api/v2/cortex`;
+          const baseUrl = getBaseURL();
           log("resolveDynamicModel (unknown id, minimal stub)", { modelId, api: api2, input, baseUrl });
           return { id: modelId, name: modelId, api: api2, input, baseUrl };
         },
@@ -575,7 +583,7 @@ var frostclaw_default = definePluginEntry({
                 modelObj.input = inferred;
               }
               if (modelObj && typeof modelObj.baseUrl !== "string") {
-                const fallbackBaseUrl = `${getBaseURL()}/api/v2/cortex`;
+                const fallbackBaseUrl = getBaseURL();
                 log("wrapStreamFn.inner: patching missing baseUrl", {
                   modelId: String(modelObj.id ?? ""),
                   fallbackBaseUrl,

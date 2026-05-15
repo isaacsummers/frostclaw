@@ -39,11 +39,14 @@ import { applyEagerInputStreamingStrip } from "./src/onpayload.js";
 //
 // Recognized variables:
 //   SNOWFLAKE_CORTEX_API_KEY / SNOWFLAKE_PAT — Snowflake PAT used for auth
-//   SNOWFLAKE_BASE_URL — Snowflake account URL (e.g. https://<acct>.snowflakecomputing.com)
-//   SNOWFLAKE_PROXY_BASE_URL — optional; if set, overrides SNOWFLAKE_BASE_URL
-//     as the LLM request target (use to route through the local proxy at
-//     http://127.0.0.1:18790). The proxy itself still uses SNOWFLAKE_BASE_URL
-//     for its outbound Snowflake target.
+//   SNOWFLAKE_BASE_URL — real Snowflake account URL
+//     (e.g. https://<acct>.snowflakecomputing.com). Used by snowflake-proxy.mjs
+//     for upstream forwarding, and as the fallback model-request target when
+//     no proxy override is set.
+//   SNOWFLAKE_PROXY_BASE_URL — optional override pointing at the local proxy
+//     (e.g. http://127.0.0.1:18790). When set, openclaw hits this URL directly
+//     with no path suffix — the proxy owns the route shape and forwards to
+//     Snowflake using its own SNOWFLAKE_BASE_URL.
 // ---------------------------------------------------------------------------
 
 function getApiKey(): string {
@@ -350,7 +353,7 @@ export default definePluginEntry({
             log("catalog.run returning catalog", { modelCount: models.length });
             return {
               provider: {
-                baseUrl: `${baseURL}/api/v2/cortex`,
+                baseUrl: baseURL,
                 apiKey: resolvedKey,
                 api: "openai-completions" as ModelApi,
                 authHeader: true,
@@ -406,7 +409,7 @@ export default definePluginEntry({
         const claude = isClaudeModel(modelId);
         const api: ModelApi = claude ? "anthropic-messages" : "openai-completions";
         const input: Array<"text" | "image"> = claude ? ["text", "image"] : ["text"];
-        const baseUrl = `${getBaseURL()}/api/v2/cortex`;
+        const baseUrl = getBaseURL();
         log("resolveDynamicModel (unknown id, minimal stub)", { modelId, api, input, baseUrl });
         return { id: modelId, name: modelId, api, input, baseUrl };
       },
@@ -491,7 +494,7 @@ export default definePluginEntry({
               (modelObj as Record<string, unknown>).input = inferred;
             }
             if (modelObj && typeof modelObj.baseUrl !== "string") {
-              const fallbackBaseUrl = `${getBaseURL()}/api/v2/cortex`;
+              const fallbackBaseUrl = getBaseURL();
               log("wrapStreamFn.inner: patching missing baseUrl", {
                 modelId: String(modelObj.id ?? ""),
                 fallbackBaseUrl,
