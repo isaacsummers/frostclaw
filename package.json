@@ -16,7 +16,7 @@
   },
   "scripts": {
     "build": "bun build ./index.ts --outfile ./dist/index.js --bundle --external 'openclaw'",
-    "test": "bun test tests/index.test.ts tests/proxy.test.ts tests/beta-headers.test.ts",
+    "test": "bun test tests/index.test.ts tests/proxy.test.ts tests/beta-headers.test.ts tests/catalog.test.ts",
     "test:live": "bun test tests/live/"
   },
   "type": "module"
