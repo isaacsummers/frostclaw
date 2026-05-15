@@ -459,16 +459,23 @@ export function createProxyServer(config) {
           body = null;
         }
 
+        // Normalise request body for all models:
+        //   - strip "snowflake-cortex/" and "openai-" provider prefixes
+        //   - rename max_tokens → max_completion_tokens (Snowflake chat completions
+        //     uses the OpenAI v1 key; max_tokens is the Anthropic / legacy name)
+        // Snowflake's /api/v2/cortex/v1/chat/completions handles ALL models
+        // (Claude, OpenAI, Llama, …) natively in OpenAI format — no format
+        // translation to/from Anthropic Messages format is required.
         let forwardBody = rawBody;
         if (body !== null && typeof body === "object") {
-          // max_tokens → max_completion_tokens
+          if (typeof body.model === "string") {
+            body.model = body.model
+              .replace(/^snowflake-cortex\//, "")
+              .replace(/^openai-/, "");
+          }
           if ("max_tokens" in body) {
             body.max_completion_tokens = body.max_tokens;
             delete body.max_tokens;
-          }
-          // strip "openai-" prefix from model ID
-          if (typeof body.model === "string" && body.model.startsWith("openai-")) {
-            body.model = body.model.slice("openai-".length);
           }
           forwardBody = JSON.stringify(body);
         }
