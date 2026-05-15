@@ -67,17 +67,21 @@ const REMOVED_FLAGS = [
 // ---------------------------------------------------------------------------
 
 describe("BETA constants drift sentinel", () => {
+  // BETA_ALWAYS and catalog functions moved to src/catalog.ts; BETA_THINKING stays in index.ts
   const indexSrc = readFileSync(
     join(import.meta.dir, "..", "index.ts"),
     "utf8",
   );
+  const catalogSrc = readFileSync(
+    join(import.meta.dir, "..", "src", "catalog.ts"),
+    "utf8",
+  );
 
-  test("BETA_ALWAYS matches index.ts source (empty array)", () => {
-    // The production declaration uses an explicit type annotation so the
-    // empty array doesn't infer as `never[]`. Match either form.
+  test("BETA_ALWAYS matches catalog.ts source (empty array)", () => {
+    // BETA_ALWAYS moved to src/catalog.ts; scan that file now.
     const m =
-      indexSrc.match(/const BETA_ALWAYS\s*:\s*string\[\]\s*=\s*\[([\s\S]*?)\];/) ??
-      indexSrc.match(/const BETA_ALWAYS\s*=\s*\[([\s\S]*?)\];/);
+      catalogSrc.match(/const BETA_ALWAYS\s*:\s*string\[\]\s*=\s*\[([\s\S]*?)\];/) ??
+      catalogSrc.match(/const BETA_ALWAYS\s*=\s*\[([\s\S]*?)\];/);
     expect(m).not.toBeNull();
     const literals = Array.from(m![1].matchAll(/"([^"]+)"/g)).map((x) => x[1]);
     expect(literals).toEqual(BETA_ALWAYS);
@@ -296,13 +300,13 @@ describe("catalog headers (anthropicBetaHeaders)", () => {
   });
 
   test("buildClaudeModelDef applies the catalog headers function uniformly", () => {
-    const indexSrc = readFileSync(
-      join(import.meta.dir, "..", "index.ts"),
+    const src = readFileSync(
+      join(import.meta.dir, "..", "src", "catalog.ts"),
       "utf8",
     );
 
-    const buildClaude = indexSrc.match(
-      /function buildClaudeModelDef\(spec: CortexModelSpec\): ModelDefinitionConfig \{([\s\S]*?)^\}/m,
+    const buildClaude = src.match(
+      /function buildClaudeModelDef\(spec: CortexModelSpec[^)]*\)[^{]*\{([\s\S]*?)^\}/m,
     );
     expect(buildClaude).not.toBeNull();
     const body = buildClaude![1];
@@ -311,14 +315,13 @@ describe("catalog headers (anthropicBetaHeaders)", () => {
   });
 
   test("anthropicBetaHeaders() implementation guards against empty header attachment", () => {
-    // The production helper must return `{}` when BETA_ALWAYS is empty so we
-    // don't ship a blank `anthropic-beta: ""` header on every Claude request.
-    const indexSrc = readFileSync(
-      join(import.meta.dir, "..", "index.ts"),
+    // buildClaudeModelDef and anthropicBetaHeaders moved to src/catalog.ts
+    const src = readFileSync(
+      join(import.meta.dir, "..", "src", "catalog.ts"),
       "utf8",
     );
 
-    expect(indexSrc).toMatch(
+    expect(src).toMatch(
       /BETA_ALWAYS\.length\s*>\s*0\s*\?\s*\{\s*"anthropic-beta":\s*BETA_ALWAYS\.join\(","\)\s*\}\s*:\s*\{\s*\}/,
     );
   });
@@ -413,8 +416,9 @@ describe("normalizeToolSchemas", () => {
 // ---------------------------------------------------------------------------
 
 describe("model catalog \u2014 claude-haiku-4-5 routing", () => {
+  // CLAUDE_MODELS and buildClaudeModelDef moved to src/catalog.ts
   const indexSrc = readFileSync(
-    join(import.meta.dir, "..", "index.ts"),
+    join(import.meta.dir, "..", "src", "catalog.ts"),
     "utf8",
   );
 
