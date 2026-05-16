@@ -262,6 +262,32 @@ export function createProxyServer(config) {
     });
     console.log(`[frostclaw-proxy] upstream ${targetUrl.split('/').pop()} → ${sfRes.status} (${Date.now() - _t0}ms, reqBytes=${bodyStr.length})`);
 
+    // If upstream errored with 4xx/5xx on a "streaming" request, the body is
+    // a small JSON error blob, not SSE. Buffer it so we can both log the
+    // error detail and forward a properly-shaped response to the client.
+    if (isStreaming && !sfRes.ok) {
+      const errBody = await sfRes.text().catch(() => "");
+      console.error(
+        `[frostclaw-proxy] upstream error ${sfRes.status} on streaming request to ${targetUrl.split('/').pop()}: ${errBody.slice(0, 1000)}`,
+      );
+      const responseHeaders = { "content-type": "application/json" };
+      for (const [key, value] of sfRes.headers.entries()) {
+        const lower = key.toLowerCase();
+        if (
+          lower !== "content-length" &&
+          lower !== "transfer-encoding" &&
+          lower !== "content-encoding" &&
+          lower !== "connection"
+        ) {
+          responseHeaders[lower] = value;
+        }
+      }
+      responseHeaders["content-length"] = Buffer.byteLength(errBody).toString();
+      res.writeHead(sfRes.status, responseHeaders);
+      res.end(errBody);
+      return;
+    }
+
     if (isStreaming) {
       const responseHeaders = {
         "content-type": sfRes.headers.get("content-type") || "text/event-stream",

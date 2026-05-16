@@ -305,6 +305,37 @@ describe("POST /v1/messages", () => {
     // empty `custom` object entirely.
     expect(tools[1]).toEqual({ type: "custom" });
   });
+
+  test("upstream 4xx on streaming request — buffers error body and forwards as JSON", async () => {
+    // Snowflake returns a JSON error body (not SSE) when it rejects a
+    // streaming `/messages` request. The proxy must read that body, log it
+    // for diagnostics, and forward it to the client with the original
+    // status code instead of leaving the SSE pump to swallow it.
+    mock.setHandler(async (_req, res) => {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          message:
+            'invalid request parameters: "messages.76: `tool_use` ids were found without `tool_result` blocks immediately after"',
+        }),
+      );
+    });
+
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-5",
+        stream: true,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toContain("tool_use");
+  });
 });
 
 // ---------------------------------------------------------------------------
