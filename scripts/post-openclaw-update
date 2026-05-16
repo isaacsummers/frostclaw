@@ -17,12 +17,9 @@ fi
 
 echo "==> Using openclaw: $OPENCLAW_BIN"
 
-# Refresh the gateway systemd service so ExecStart points at the new version.
-if [ -f "$GATEWAY_SVC" ]; then
-  echo "==> Refreshing openclaw gateway service..."
-  # Stop first so openclaw gateway install doesn't see a port conflict.
-  systemctl --user stop openclaw-gateway.service 2>/dev/null || true
-fi
+# Stop the gateway first — before any file replacements happen.
+echo "==> Stopping openclaw gateway service..."
+systemctl --user stop openclaw-gateway.service 2>/dev/null || true
 
 # Rebuild frostclaw BEFORE gateway install/start so dist/index.js is fresh.
 if [ -d "$FROSTCLAW_DIR" ]; then
