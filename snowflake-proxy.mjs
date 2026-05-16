@@ -254,11 +254,13 @@ export function createProxyServer(config) {
       if (!forwardHeaders[k]) forwardHeaders[k] = v;
     }
 
+    const _t0 = Date.now();
     const sfRes = await fetch(targetUrl, {
       method: "POST",
       headers: forwardHeaders,
       body: bodyStr,
     });
+    console.log(`[frostclaw-proxy] upstream ${targetUrl.split('/').pop()} → ${sfRes.status} (${Date.now() - _t0}ms, reqBytes=${bodyStr.length})`);
 
     if (isStreaming) {
       const responseHeaders = {
@@ -310,6 +312,7 @@ export function createProxyServer(config) {
         if (
           lower !== "content-length" &&
           lower !== "transfer-encoding" &&
+          lower !== "content-encoding" &&
           lower !== "connection"
         ) {
           responseHeaders[lower] = value;
@@ -325,6 +328,7 @@ export function createProxyServer(config) {
   // ── HTTP server ────────────────────────────────────────────────────────────
 
   const server = createServer(async (req, res) => {
+    console.log(`[frostclaw-proxy] ${req.method} ${req.url} pid=${req.socket.remoteAddress}:${req.socket.remotePort}`);
     // Health check
     if (req.method === "GET" && req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -468,11 +472,14 @@ export function createProxyServer(config) {
         // translation to/from Anthropic Messages format is required.
         let forwardBody = rawBody;
         if (body !== null && typeof body === "object") {
+          const originalModel = body.model;
           if (typeof body.model === "string") {
             body.model = body.model
               .replace(/^snowflake-cortex\//, "")
               .replace(/^openai-/, "");
           }
+          const promptChars = (body.messages ?? []).reduce((n, m) => n + (typeof m.content === "string" ? m.content.length : JSON.stringify(m.content).length), 0);
+          console.log(`[frostclaw-proxy] chat/completions model: ${originalModel} → ${body.model} promptChars=${promptChars}`);
           if ("max_tokens" in body) {
             body.max_completion_tokens = body.max_tokens;
             delete body.max_tokens;
@@ -514,6 +521,12 @@ export function createProxyServer(config) {
     );
   });
 
+  // keepAliveTimeout must exceed undici's connection reuse window (~4s).
+  // Node.js default is 5000ms which races with undici keep-alive reuse — causes
+  // "terminated" errors on Node.js fetch (lancedb-pro uses OpenAI SDK / undici).
+  // Set to 65s to safely outlast undici's 60s idle timeout.
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
   return {
     server,
     close() {

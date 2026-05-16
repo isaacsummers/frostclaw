@@ -245,6 +245,7 @@ function buildClaudeModelDef(spec, baseURL) {
   return {
     id: spec.id,
     name: spec.name,
+    provider: "snowflake-cortex",
     api: "anthropic-messages",
     baseUrl: url,
     reasoning: spec.reasoning,
@@ -286,6 +287,7 @@ function buildOpenAIModelDef(spec, baseURL) {
   return {
     id: spec.id,
     name: spec.name,
+    provider: "snowflake-cortex",
     api: "openai-completions",
     baseUrl: url,
     reasoning: spec.reasoning,
@@ -332,6 +334,7 @@ function buildOpenSourceModelDef(spec, baseURL) {
   return {
     id: spec.id,
     name: spec.name,
+    provider: "snowflake-cortex",
     api: "openai-completions",
     baseUrl: url,
     reasoning: spec.reasoning,

@@ -27,6 +27,7 @@ export type CompatConfig = Record<string, unknown>;
 export type ModelDefinitionConfig = {
   id: string;
   name: string;
+  provider?: string;
   api?: ModelApi;
   baseUrl?: string;
   reasoning: boolean;
@@ -175,6 +176,7 @@ export function buildClaudeModelDef(spec: CortexModelSpec, baseURL?: string): Mo
   return {
     id: spec.id,
     name: spec.name,
+    provider: "snowflake-cortex",
     api: "anthropic-messages",
     baseUrl: url,
     reasoning: spec.reasoning,
@@ -207,6 +209,7 @@ export function buildOpenAIModelDef(spec: CortexModelSpec, baseURL?: string): Mo
   return {
     id: spec.id,
     name: spec.name,
+    provider: "snowflake-cortex",
     api: "openai-completions",
     baseUrl: url,
     reasoning: spec.reasoning,
@@ -243,6 +246,7 @@ export function buildOpenSourceModelDef(spec: CortexModelSpec, baseURL?: string)
   return {
     id: spec.id,
     name: spec.name,
+    provider: "snowflake-cortex",
     api: "openai-completions",
     baseUrl: url,
     reasoning: spec.reasoning,
