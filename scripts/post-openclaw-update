@@ -34,6 +34,11 @@ else
   echo "==> Frostclaw not found at $FROSTCLAW_DIR, skipping plugin rebuild"
 fi
 
+if [ -d "$FROSTCLAW_DIR" ]; then
+  echo "==> Restarting unified Snowflake proxy..."
+  systemctl --user restart snowflake-proxy 2>/dev/null || true
+fi
+
 if [ -f "$GATEWAY_SVC" ]; then
   "$OPENCLAW_BIN" gateway install --force || {
     echo "  ❌ openclaw gateway install failed" >&2
@@ -44,11 +49,6 @@ if [ -f "$GATEWAY_SVC" ]; then
   systemctl --user start openclaw-gateway.service 2>/dev/null && \
     echo "  ✅ openclaw-gateway.service started" || \
     echo "  ⚠️  could not start openclaw-gateway.service"
-fi
-
-if [ -d "$FROSTCLAW_DIR" ]; then
-  echo "==> Restarting unified Snowflake proxy..."
-  systemctl --user restart snowflake-proxy 2>/dev/null || true
 fi
 
 # Run doctor now that the gateway is up with the freshly built plugin.
