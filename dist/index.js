@@ -688,9 +688,13 @@ var frostclaw_default = definePluginEntry({
             return null;
           if (isClaudeModel(ctx.modelId)) {
             return {
+              sanitizeToolCallIds: true,
+              toolCallIdMode: "strict",
+              preserveNativeAnthropicToolUseIds: true,
               repairToolUseResultPairing: true,
               allowSyntheticToolResults: true,
-              validateAnthropicTurns: true
+              validateAnthropicTurns: true,
+              preserveSignatures: true
             };
           }
           return null;

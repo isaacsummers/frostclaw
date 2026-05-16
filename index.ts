@@ -665,17 +665,43 @@ export default definePluginEntry({
       },
 
       // -----------------------------------------------------------------------
-      // Replay policy: repair orphaned tool_use/result pairs for Claude,
-      // validate Anthropic turn structure
+      // Replay policy for Claude on Snowflake Cortex.
+      //
+      // The policy flags below activate openclaw's runtime tool-call/tool-result
+      // repair pipeline before the Anthropic Messages payload is serialized.
+      // Without these flags, owned providers (like this one) skip the wrapper
+      // that openclaw installs automatically for unowned Anthropic providers
+      // via `buildUnownedProviderTransportReplayFallback`. Missing wrapper =
+      // `tool_use` orphans (e.g. from session compaction or restart-mid-tool)
+      // reach Snowflake's strict validator and 400 with "tool_use ids were
+      // found without tool_result blocks immediately after".
+      //
+      // What each flag turns on (see selection-*.js wrapStreamFn registration):
+      //   - sanitizeToolCallIds + toolCallIdMode: gates the wrapper that runs
+      //     `sanitizeToolUseResultPairing` (drops dupes, moves displaced
+      //     results adjacent, drops orphans).
+      //   - preserveNativeAnthropicToolUseIds: keep `toolu_bdrk_*` IDs
+      //     unchanged across the sanitizer (Bedrock-style native IDs).
+      //   - repairToolUseResultPairing: actually do the pairing repair.
+      //   - allowSyntheticToolResults: synthesize a placeholder tool_result
+      //     when a tool_use has no matching result instead of dropping it.
+      //   - validateAnthropicTurns: final pass that strips dangling tool_use
+      //     blocks and merges consecutive user turns.
+      //   - preserveSignatures: keep thinking-block signatures across replay
+      //     so Bedrock-style provider-owned thinking continues to validate.
       // -----------------------------------------------------------------------
       buildReplayPolicy(ctx: ProviderReplayPolicyContext) {
         if (!ctx.modelId) return null;
 
         if (isClaudeModel(ctx.modelId)) {
           return {
+            sanitizeToolCallIds: true,
+            toolCallIdMode: "strict",
+            preserveNativeAnthropicToolUseIds: true,
             repairToolUseResultPairing: true,
             allowSyntheticToolResults: true,
             validateAnthropicTurns: true,
+            preserveSignatures: true,
           };
         }
 
