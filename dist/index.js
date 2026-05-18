@@ -379,6 +379,10 @@ function getApiKey() {
 function getBaseURL() {
   return process.env.SNOWFLAKE_PROXY_BASE_URL ?? process.env.SNOWFLAKE_BASE_URL ?? "";
 }
+var _pluginLogger = null;
+function setPluginLogger(logger) {
+  _pluginLogger = logger;
+}
 var DEBUG_ENABLED = (() => {
   const v = process.env.FROSTCLAW_DEBUG;
   if (!v)
@@ -387,18 +391,32 @@ var DEBUG_ENABLED = (() => {
   return s !== "0" && s !== "false" && s !== "off" && s !== "";
 })();
 function log(event, data) {
-  if (!DEBUG_ENABLED)
-    return;
   const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
-  console.log(line);
+  if (_pluginLogger) {
+    if (DEBUG_ENABLED) {
+      _pluginLogger.info(line);
+    } else {
+      _pluginLogger.debug?.(line);
+    }
+  } else if (DEBUG_ENABLED) {
+    console.log(line);
+  }
 }
 function logWarn(event, data) {
   const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
-  console.warn(line);
+  if (_pluginLogger) {
+    _pluginLogger.warn(line);
+  } else {
+    console.warn(line);
+  }
 }
 function logError(event, data) {
   const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
-  console.error(line);
+  if (_pluginLogger) {
+    _pluginLogger.error(line);
+  } else {
+    console.error(line);
+  }
 }
 var BETA_THINKING = [
   "interleaved-thinking-2025-05-14"
@@ -462,6 +480,7 @@ var frostclaw_default = definePluginEntry({
   description: "Snowflake Cortex AI — routes Claude models to Anthropic Messages API " + "and all other models to OpenAI-compatible Chat Completions, both " + "behind PAT authentication.",
   register(api) {
     try {
+      setPluginLogger(api.logger);
       log("plugin registered");
       api.registerMemoryEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
       api.registerProvider({

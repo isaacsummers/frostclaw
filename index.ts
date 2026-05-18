@@ -62,13 +62,32 @@ function getBaseURL(): string {
 // ---------------------------------------------------------------------------
 
 // Logging tiers:
-//   log()      — debug/verbose, gated behind FROSTCLAW_DEBUG. Uses console.log
-//                (stdout) so the Control UI shows these as info-level, not errors.
-//                Stdout can buffer under heavy I/O; acceptable for verbose debug.
-//   logWarn()  — operational signals always emitted (retry fired, error-path
-//                resolved). Uses console.warn (stderr) — unbuffered, always
-//                visible without enabling debug mode.
-//   logError() — actual failures, always emitted. Uses console.error (stderr).
+//   log()      — debug/verbose. Normally routed to api.logger.debug() so it
+//                only appears when OpenClaw's logging.level=debug (or lower).
+//                FROSTCLAW_DEBUG=1 overrides this to api.logger.info() so
+//                these lines surface at the default info level without touching
+//                openclaw.json — useful for temporary tracing without a full
+//                log-level change.
+//   logWarn()  — operational signals (retry fired, error-path resolved).
+//                Always emitted via api.logger.warn().
+//   logError() — actual failures. Always emitted via api.logger.error().
+//
+// Before register() runs (module-load time), all three fall back to the
+// matching console.* method so nothing is silently dropped.
+type PluginLogger = {
+  debug?: (message: string) => void;
+  info: (message: string) => void;
+  warn: (message: string) => void;
+  error: (message: string) => void;
+};
+
+let _pluginLogger: PluginLogger | null = null;
+
+/** Call once inside register(api) to wire in the OpenClaw-scoped logger. */
+function setPluginLogger(logger: PluginLogger): void {
+  _pluginLogger = logger;
+}
+
 const DEBUG_ENABLED: boolean = ((): boolean => {
   const v = process.env.FROSTCLAW_DEBUG;
   if (!v) return false;
@@ -77,19 +96,37 @@ const DEBUG_ENABLED: boolean = ((): boolean => {
 })();
 
 function log(event: string, data?: Record<string, unknown>): void {
-  if (!DEBUG_ENABLED) return;
   const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
-  console.log(line);
+  if (_pluginLogger) {
+    // FROSTCLAW_DEBUG forces info level so these appear without setting
+    // logging.level=debug in openclaw.json.
+    if (DEBUG_ENABLED) {
+      _pluginLogger.info(line);
+    } else {
+      _pluginLogger.debug?.(line);
+    }
+  } else if (DEBUG_ENABLED) {
+    // Pre-registration fallback — only emit if debug is explicitly enabled.
+    console.log(line);
+  }
 }
 
 function logWarn(event: string, data?: Record<string, unknown>): void {
   const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
-  console.warn(line);
+  if (_pluginLogger) {
+    _pluginLogger.warn(line);
+  } else {
+    console.warn(line);
+  }
 }
 
 function logError(event: string, data?: Record<string, unknown>): void {
   const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
-  console.error(line);
+  if (_pluginLogger) {
+    _pluginLogger.error(line);
+  } else {
+    console.error(line);
+  }
 }
 
 function assertConfig(): void {
@@ -311,8 +348,9 @@ export default definePluginEntry({
 
   register(api) {
     try {
-      // Silent on success to avoid per-load log spam (openclaw re-imports
-      // this plugin frequently; debug output is gated to FROSTCLAW_DEBUG).
+      // Wire in the OpenClaw-scoped logger immediately so all subsequent
+      // log calls route through it and respect openclaw.json logging.level.
+      setPluginLogger(api.logger);
       log("plugin registered");
       api.registerMemoryEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
       api.registerProvider({
