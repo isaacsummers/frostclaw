@@ -380,8 +380,31 @@ function getBaseURL() {
   return process.env.SNOWFLAKE_PROXY_BASE_URL ?? process.env.SNOWFLAKE_BASE_URL ?? "";
 }
 var _pluginLogger = null;
-function setPluginLogger(logger) {
+var LOG_LEVEL_ORDER = {
+  trace: 0,
+  debug: 1,
+  info: 2,
+  warn: 3,
+  error: 4,
+  fatal: 5
+};
+var _debugForceLevel = "info";
+function setPluginLogger(logger, cfg) {
   _pluginLogger = logger;
+  const fileLevel = cfg?.logging?.level ?? "info";
+  const consoleLevel = cfg?.logging?.consoleLevel ?? "info";
+  const fileOrder = LOG_LEVEL_ORDER[fileLevel] ?? LOG_LEVEL_ORDER.info;
+  const consoleOrder = LOG_LEVEL_ORDER[consoleLevel] ?? LOG_LEVEL_ORDER.info;
+  const effectiveOrder = Math.min(fileOrder, consoleOrder);
+  if (effectiveOrder <= LOG_LEVEL_ORDER.debug) {
+    _debugForceLevel = "debug";
+  } else if (effectiveOrder <= LOG_LEVEL_ORDER.info) {
+    _debugForceLevel = "info";
+  } else if (effectiveOrder <= LOG_LEVEL_ORDER.warn) {
+    _debugForceLevel = "warn";
+  } else {
+    _debugForceLevel = "error";
+  }
 }
 var DEBUG_ENABLED = (() => {
   const v = process.env.FROSTCLAW_DEBUG;
@@ -394,7 +417,11 @@ function log(event, data) {
   const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
   if (_pluginLogger) {
     if (DEBUG_ENABLED) {
-      _pluginLogger.info(line);
+      const method = _pluginLogger[_debugForceLevel];
+      if (typeof method === "function")
+        method.call(_pluginLogger, line);
+      else
+        _pluginLogger.info(line);
     } else {
       _pluginLogger.debug?.(line);
     }
@@ -480,7 +507,7 @@ var frostclaw_default = definePluginEntry({
   description: "Snowflake Cortex AI — routes Claude models to Anthropic Messages API " + "and all other models to OpenAI-compatible Chat Completions, both " + "behind PAT authentication.",
   register(api) {
     try {
-      setPluginLogger(api.logger);
+      setPluginLogger(api.logger, api.config);
       log("plugin registered");
       api.registerMemoryEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
       api.registerProvider({

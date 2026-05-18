@@ -83,9 +83,35 @@ type PluginLogger = {
 
 let _pluginLogger: PluginLogger | null = null;
 
+// Numeric ordering for log levels — lower = more verbose.
+const LOG_LEVEL_ORDER: Record<string, number> = {
+  trace: 0, debug: 1, info: 2, warn: 3, error: 4, fatal: 5,
+};
+
+// The effective log level to use when FROSTCLAW_DEBUG=1. Computed once at
+// registration time from both logging.level and logging.consoleLevel so debug
+// messages surface on whichever output is most permissive.
+let _debugForceLevel: "debug" | "info" | "warn" | "error" = "info";
+
 /** Call once inside register(api) to wire in the OpenClaw-scoped logger. */
-function setPluginLogger(logger: PluginLogger): void {
+function setPluginLogger(logger: PluginLogger, cfg: { logging?: { level?: string; consoleLevel?: string } }): void {
   _pluginLogger = logger;
+  // Pick the most permissive (lowest) of the two configured log levels so
+  // FROSTCLAW_DEBUG forces debug output to wherever it will actually appear.
+  const fileLevel = cfg?.logging?.level ?? "info";
+  const consoleLevel = cfg?.logging?.consoleLevel ?? "info";
+  const fileOrder = LOG_LEVEL_ORDER[fileLevel] ?? LOG_LEVEL_ORDER.info;
+  const consoleOrder = LOG_LEVEL_ORDER[consoleLevel] ?? LOG_LEVEL_ORDER.info;
+  const effectiveOrder = Math.min(fileOrder, consoleOrder);
+  if (effectiveOrder <= LOG_LEVEL_ORDER.debug) {
+    _debugForceLevel = "debug";
+  } else if (effectiveOrder <= LOG_LEVEL_ORDER.info) {
+    _debugForceLevel = "info";
+  } else if (effectiveOrder <= LOG_LEVEL_ORDER.warn) {
+    _debugForceLevel = "warn";
+  } else {
+    _debugForceLevel = "error";
+  }
 }
 
 const DEBUG_ENABLED: boolean = ((): boolean => {
@@ -98,10 +124,12 @@ const DEBUG_ENABLED: boolean = ((): boolean => {
 function log(event: string, data?: Record<string, unknown>): void {
   const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
   if (_pluginLogger) {
-    // FROSTCLAW_DEBUG forces info level so these appear without setting
-    // logging.level=debug in openclaw.json.
     if (DEBUG_ENABLED) {
-      _pluginLogger.info(line);
+      // Force to the most permissive level visible in either file or console
+      // output, so debug messages surface wherever they can be seen.
+      const method = _pluginLogger[_debugForceLevel];
+      if (typeof method === "function") (method as (m: string) => void).call(_pluginLogger, line);
+      else _pluginLogger.info(line);
     } else {
       _pluginLogger.debug?.(line);
     }
@@ -349,8 +377,9 @@ export default definePluginEntry({
   register(api) {
     try {
       // Wire in the OpenClaw-scoped logger immediately so all subsequent
-      // log calls route through it and respect openclaw.json logging.level.
-      setPluginLogger(api.logger);
+      // log calls route through it and respect openclaw.json logging.level
+      // and logging.consoleLevel.
+      setPluginLogger(api.logger, api.config);
       log("plugin registered");
       api.registerMemoryEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
       api.registerProvider({
