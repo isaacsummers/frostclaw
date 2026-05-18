@@ -390,7 +390,11 @@ function log(event, data) {
   if (!DEBUG_ENABLED)
     return;
   const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
-  console.error(line);
+  console.log(line);
+}
+function logWarn(event, data) {
+  const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
+  console.warn(line);
 }
 function logError(event, data) {
   const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
@@ -664,7 +668,7 @@ var frostclaw_default = definePluginEntry({
                     }
                     const valueObj = value;
                     if (valueObj && typeof valueObj === "object" && (valueObj.errorMessage || valueObj.stopReason === "error")) {
-                      log("wrapStreamFn.promise resolved with error", {
+                      logWarn("wrapStreamFn.promise resolved with error", {
                         errorMessage: valueObj.errorMessage,
                         stopReason: valueObj.stopReason
                       });
@@ -672,7 +676,7 @@ var frostclaw_default = definePluginEntry({
                     const isThinkingOnlyContent = Array.isArray(valueObj?.content) && valueObj.content.length > 0 && valueObj.content.every((blk) => blk?.type === "thinking");
                     const isEmptyOrThinkingOnlyStop = attempt < EMPTY_STOP_MAX_RETRIES && valueObj && typeof valueObj === "object" && valueObj.stopReason === "stop" && (Array.isArray(valueObj.content) && valueObj.content.length === 0 || isThinkingOnlyContent);
                     if (isEmptyOrThinkingOnlyStop) {
-                      log("wrapStreamFn.promise: empty/thinking-only stop from Snowflake, retrying", {
+                      logWarn("wrapStreamFn.promise: empty/thinking-only stop from Snowflake, retrying", {
                         modelId,
                         attempt,
                         isThinkingOnly: isThinkingOnlyContent,

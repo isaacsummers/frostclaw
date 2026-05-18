@@ -61,11 +61,14 @@ function getBaseURL(): string {
 // its plugin log. Kept dependency-free and side-effect-only.
 // ---------------------------------------------------------------------------
 
-// Debug logging is gated behind FROSTCLAW_DEBUG because every call here
-// goes through synchronous console.error -> stderr -> journald, which blocks
-// the event loop on hot paths (wrapStreamFn, onPayload, resolveDynamicModel
-// fire many times per request). Error-path logging (log.error) stays
-// unconditional so we never silently lose failure signals.
+// Logging tiers:
+//   log()      — debug/verbose, gated behind FROSTCLAW_DEBUG. Uses console.log
+//                (stdout) so the Control UI shows these as info-level, not errors.
+//                Stdout can buffer under heavy I/O; acceptable for verbose debug.
+//   logWarn()  — operational signals always emitted (retry fired, error-path
+//                resolved). Uses console.warn (stderr) — unbuffered, always
+//                visible without enabling debug mode.
+//   logError() — actual failures, always emitted. Uses console.error (stderr).
 const DEBUG_ENABLED: boolean = ((): boolean => {
   const v = process.env.FROSTCLAW_DEBUG;
   if (!v) return false;
@@ -76,7 +79,12 @@ const DEBUG_ENABLED: boolean = ((): boolean => {
 function log(event: string, data?: Record<string, unknown>): void {
   if (!DEBUG_ENABLED) return;
   const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
-  console.error(line);
+  console.log(line);
+}
+
+function logWarn(event: string, data?: Record<string, unknown>): void {
+  const line = data ? `[snowflake-cortex] ${event} ${JSON.stringify(data)}` : `[snowflake-cortex] ${event}`;
+  console.warn(line);
 }
 
 function logError(event: string, data?: Record<string, unknown>): void {
@@ -641,7 +649,7 @@ export default definePluginEntry({
                     typeof valueObj === "object" &&
                     (valueObj.errorMessage || valueObj.stopReason === "error")
                   ) {
-                    log("wrapStreamFn.promise resolved with error", {
+                    logWarn("wrapStreamFn.promise resolved with error", {
                       errorMessage: valueObj.errorMessage,
                       stopReason: valueObj.stopReason,
                     });
@@ -669,7 +677,7 @@ export default definePluginEntry({
                       isThinkingOnlyContent
                     );
                   if (isEmptyOrThinkingOnlyStop) {
-                    log("wrapStreamFn.promise: empty/thinking-only stop from Snowflake, retrying", {
+                    logWarn("wrapStreamFn.promise: empty/thinking-only stop from Snowflake, retrying", {
                       modelId,
                       attempt,
                       isThinkingOnly: isThinkingOnlyContent,
