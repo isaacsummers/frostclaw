@@ -648,22 +648,46 @@ var frostclaw_default = definePluginEntry({
               };
               const streamResult = inner(model, context, merged);
               if (streamResult && typeof streamResult.then === "function") {
-                return streamResult.then((value) => {
-                  const valueObj = value;
-                  if (valueObj && typeof valueObj === "object" && (valueObj.errorMessage || valueObj.stopReason === "error")) {
-                    log("wrapStreamFn.promise resolved with error", {
-                      errorMessage: valueObj.errorMessage,
-                      stopReason: valueObj.stopReason
-                    });
+                const EMPTY_STOP_MAX_RETRIES = 2;
+                return (async () => {
+                  let currentResult = streamResult;
+                  for (let attempt = 0;attempt <= EMPTY_STOP_MAX_RETRIES; attempt++) {
+                    let value;
+                    try {
+                      value = await currentResult;
+                    } catch (err) {
+                      logError("wrapStreamFn.promise REJECTED", {
+                        error: String(err),
+                        stack: err instanceof Error ? err.stack : undefined
+                      });
+                      throw err;
+                    }
+                    const valueObj = value;
+                    if (valueObj && typeof valueObj === "object" && (valueObj.errorMessage || valueObj.stopReason === "error")) {
+                      log("wrapStreamFn.promise resolved with error", {
+                        errorMessage: valueObj.errorMessage,
+                        stopReason: valueObj.stopReason
+                      });
+                    }
+                    const isThinkingOnlyContent = Array.isArray(valueObj?.content) && valueObj.content.length > 0 && valueObj.content.every((blk) => blk?.type === "thinking");
+                    const isEmptyOrThinkingOnlyStop = attempt < EMPTY_STOP_MAX_RETRIES && valueObj && typeof valueObj === "object" && valueObj.stopReason === "stop" && (Array.isArray(valueObj.content) && valueObj.content.length === 0 || isThinkingOnlyContent);
+                    if (isEmptyOrThinkingOnlyStop) {
+                      log("wrapStreamFn.promise: empty/thinking-only stop from Snowflake, retrying", {
+                        modelId,
+                        attempt,
+                        isThinkingOnly: isThinkingOnlyContent,
+                        contentLength: Array.isArray(valueObj?.content) ? valueObj.content.length : 0
+                      });
+                      const retryResult = inner(model, context, merged);
+                      if (retryResult && typeof retryResult.then === "function") {
+                        currentResult = retryResult;
+                        continue;
+                      }
+                      return retryResult;
+                    }
+                    return value;
                   }
-                  return value;
-                }, (err) => {
-                  logError("wrapStreamFn.promise REJECTED", {
-                    error: String(err),
-                    stack: err instanceof Error ? err.stack : undefined
-                  });
-                  throw err;
-                });
+                })();
               }
               return streamResult;
             } catch (err) {

@@ -615,8 +615,24 @@ export default definePluginEntry({
               streamResult &&
               typeof (streamResult as { then?: unknown }).then === "function"
             ) {
-              return (streamResult as Promise<unknown>).then(
-                (value) => {
+              // Retry wrapper: Snowflake returns HTTP 200 with empty content +
+              // stop_reason="stop" when the account hits a concurrency/rate
+              // limit instead of returning a proper 429. Retry transparently
+              // up to EMPTY_STOP_MAX_RETRIES times before letting it through.
+              const EMPTY_STOP_MAX_RETRIES = 2;
+              return (async () => {
+                let currentResult = streamResult as Promise<unknown>;
+                for (let attempt = 0; attempt <= EMPTY_STOP_MAX_RETRIES; attempt++) {
+                  let value: unknown;
+                  try {
+                    value = await currentResult;
+                  } catch (err) {
+                    logError("wrapStreamFn.promise REJECTED", {
+                      error: String(err),
+                      stack: err instanceof Error ? err.stack : undefined,
+                    });
+                    throw err;
+                  }
                   const valueObj = value as
                     | { errorMessage?: unknown; stopReason?: unknown; content?: unknown }
                     | undefined;
@@ -630,16 +646,46 @@ export default definePluginEntry({
                       stopReason: valueObj.stopReason,
                     });
                   }
+                  // Detect empty stop — Snowflake overload signal.
+                  // Two forms:
+                  //   (a) content array is completely empty (content.length === 0)
+                  //   (b) content array contains only thinking blocks with no text
+                  //       output (thinking-only response: output ≈ 2 tokens,
+                  //       assistantTexts: [] at OpenClaw level)
+                  // Both are Snowflake's silent overload response instead of 429.
+                  const isThinkingOnlyContent =
+                    Array.isArray(valueObj?.content) &&
+                    (valueObj!.content as unknown[]).length > 0 &&
+                    (valueObj!.content as Array<{ type?: string }>).every(
+                      (blk) => blk?.type === "thinking"
+                    );
+                  const isEmptyOrThinkingOnlyStop =
+                    attempt < EMPTY_STOP_MAX_RETRIES &&
+                    valueObj &&
+                    typeof valueObj === "object" &&
+                    valueObj.stopReason === "stop" &&
+                    (
+                      (Array.isArray(valueObj.content) && valueObj.content.length === 0) ||
+                      isThinkingOnlyContent
+                    );
+                  if (isEmptyOrThinkingOnlyStop) {
+                    log("wrapStreamFn.promise: empty/thinking-only stop from Snowflake, retrying", {
+                      modelId,
+                      attempt,
+                      isThinkingOnly: isThinkingOnlyContent,
+                      contentLength: Array.isArray(valueObj?.content) ? (valueObj!.content as unknown[]).length : 0,
+                    });
+                    const retryResult = inner(model, context, merged as typeof options);
+                    if (retryResult && typeof (retryResult as { then?: unknown }).then === "function") {
+                      currentResult = retryResult as Promise<unknown>;
+                      continue;
+                    }
+                    // Retry returned a stream — can't handle here, pass through
+                    return retryResult;
+                  }
                   return value;
-                },
-                (err) => {
-                  logError("wrapStreamFn.promise REJECTED", {
-                    error: String(err),
-                    stack: err instanceof Error ? err.stack : undefined,
-                  });
-                  throw err;
-                },
-              ) as typeof streamResult;
+                }
+              })() as typeof streamResult;
             }
             return streamResult;
           } catch (err) {
