@@ -259,6 +259,7 @@ import {
   stripEagerInputStreaming,
   isClaudeModel,
 } from "./src/transforms.js";
+import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 
 /**
  * Returns true for models that support tool calling on the OpenAI Chat
@@ -682,19 +683,44 @@ export default definePluginEntry({
               },
             };
             const streamResult = inner(model, context, merged as typeof options);
-            // The openclaw runtime may invoke streamFn as streamSimple, which
-            // returns a Promise. Wrap to observe rejection so we can capture
-            // the stack trace for the "Cannot read properties of undefined"
-            // crash that otherwise surfaces only as opaque text.
+            // Snowflake returns HTTP 200 with empty content + stop_reason="stop"
+            // when the account hits a concurrency/rate limit instead of returning
+            // a proper 429. Detect this and retry transparently.
+            //
+            // Two invocation modes:
+            //   (a) Promise path — streamFn returned a Promise (test mocks, some
+            //       alternative transports). Await the result then inspect.
+            //   (b) Stream path — streamFn returned an AssistantMessageEventStream
+            //       (the real OpenClaw transport: always synchronous stream +
+            //       background async HTTP task). Forward events in real-time; after
+            //       the stream settles inspect the final message for empty stop.
+            //
+            // Empty-stop forms:
+            //   1. content array completely empty  → pure Snowflake overload
+            //   2. content only thinking blocks    → thinking-only overload signal
+            const EMPTY_STOP_MAX_RETRIES = 2;
+
+            // Helper: is a settled AssistantMessage an empty-stop that warrants retry?
+            function isEmptyStop(
+              msg: { stopReason?: unknown; content?: unknown } | undefined,
+              attempt: number
+            ): boolean {
+              if (!msg || typeof msg !== "object") return false;
+              if (msg.stopReason !== "stop") return false;
+              if (attempt >= EMPTY_STOP_MAX_RETRIES) return false;
+              if (!Array.isArray(msg.content)) return false;
+              if (msg.content.length === 0) return true;
+              // thinking-only
+              return (msg.content as Array<{ type?: string }>).every(
+                (blk) => blk?.type === "thinking"
+              );
+            }
+
+            // (a) Promise path
             if (
               streamResult &&
               typeof (streamResult as { then?: unknown }).then === "function"
             ) {
-              // Retry wrapper: Snowflake returns HTTP 200 with empty content +
-              // stop_reason="stop" when the account hits a concurrency/rate
-              // limit instead of returning a proper 429. Retry transparently
-              // up to EMPTY_STOP_MAX_RETRIES times before letting it through.
-              const EMPTY_STOP_MAX_RETRIES = 2;
               return (async () => {
                 let currentResult = streamResult as Promise<unknown>;
                 for (let attempt = 0; attempt <= EMPTY_STOP_MAX_RETRIES; attempt++) {
@@ -721,33 +747,14 @@ export default definePluginEntry({
                       stopReason: valueObj.stopReason,
                     });
                   }
-                  // Detect empty stop — Snowflake overload signal.
-                  // Two forms:
-                  //   (a) content array is completely empty (content.length === 0)
-                  //   (b) content array contains only thinking blocks with no text
-                  //       output (thinking-only response: output ≈ 2 tokens,
-                  //       assistantTexts: [] at OpenClaw level)
-                  // Both are Snowflake's silent overload response instead of 429.
-                  const isThinkingOnlyContent =
-                    Array.isArray(valueObj?.content) &&
-                    (valueObj!.content as unknown[]).length > 0 &&
-                    (valueObj!.content as Array<{ type?: string }>).every(
-                      (blk) => blk?.type === "thinking"
-                    );
-                  const isEmptyOrThinkingOnlyStop =
-                    attempt < EMPTY_STOP_MAX_RETRIES &&
-                    valueObj &&
-                    typeof valueObj === "object" &&
-                    valueObj.stopReason === "stop" &&
-                    (
-                      (Array.isArray(valueObj.content) && valueObj.content.length === 0) ||
-                      isThinkingOnlyContent
-                    );
-                  if (isEmptyOrThinkingOnlyStop) {
+                  if (isEmptyStop(valueObj, attempt)) {
+                    const isThinkingOnly =
+                      Array.isArray(valueObj?.content) &&
+                      (valueObj!.content as unknown[]).length > 0;
                     logWarn("wrapStreamFn.promise: empty/thinking-only stop from Snowflake, retrying", {
                       modelId,
                       attempt,
-                      isThinkingOnly: isThinkingOnlyContent,
+                      isThinkingOnly,
                       contentLength: Array.isArray(valueObj?.content) ? (valueObj!.content as unknown[]).length : 0,
                     });
                     const retryResult = inner(model, context, merged as typeof options);
@@ -755,13 +762,120 @@ export default definePluginEntry({
                       currentResult = retryResult as Promise<unknown>;
                       continue;
                     }
-                    // Retry returned a stream — can't handle here, pass through
+                    // Retry returned a stream — fall through to stream path below
                     return retryResult;
                   }
                   return value;
                 }
               })() as typeof streamResult;
             }
+
+            // (b) Stream path — AssistantMessageEventStream (real transport)
+            // Forward events to a new outer stream as they arrive. After the
+            // inner stream settles, check the final message for empty-stop and
+            // retry by pumping a fresh inner stream into the same outer stream.
+            if (
+              streamResult &&
+              typeof (streamResult as { result?: unknown })[Symbol.asyncIterator as unknown as string] === "function" &&
+              typeof (streamResult as { result?: unknown }).result === "function"
+            ) {
+              const outerStream = createAssistantMessageEventStream();
+              void (async () => {
+                let currentStream = streamResult as AsyncIterable<unknown> & { result: () => Promise<unknown> };
+                for (let attempt = 0; attempt <= EMPTY_STOP_MAX_RETRIES; attempt++) {
+                  // Buffer events only until we confirm the stream isn't empty.
+                  // For non-empty responses: forward buffered header events then
+                  // switch to pass-through. For empty responses: discard buffer
+                  // and retry — no events reach the outer stream from this attempt.
+                  const buffer: unknown[] = [];
+                  let hasContent = false;
+                  try {
+                    for await (const event of currentStream) {
+                      const evType = (event as { type?: string })?.type;
+                      const isContentEvent =
+                        evType === "text_start" ||
+                        evType === "text_delta" ||
+                        evType === "text_end" ||
+                        evType === "toolcall_start" ||
+                        evType === "toolcall_delta" ||
+                        evType === "toolcall_end" ||
+                        evType === "thinking_start" ||
+                        evType === "thinking_delta" ||
+                        evType === "thinking_end";
+                      if (!hasContent && isContentEvent) {
+                        // First real content — flush the buffer and go pass-through.
+                        hasContent = true;
+                        for (const buffered of buffer) {
+                          (outerStream as unknown as { push: (e: unknown) => void }).push(buffered);
+                        }
+                        buffer.length = 0;
+                      }
+                      if (hasContent) {
+                        (outerStream as unknown as { push: (e: unknown) => void }).push(event);
+                      } else {
+                        buffer.push(event);
+                      }
+                    }
+                  } catch (err) {
+                    logError("wrapStreamFn.stream ERROR", {
+                      attempt,
+                      error: String(err),
+                      stack: err instanceof Error ? err.stack : undefined,
+                    });
+                    // Flush buffer so the outer stream doesn't hang, then end with error.
+                    for (const buffered of buffer) {
+                      (outerStream as unknown as { push: (e: unknown) => void }).push(buffered);
+                    }
+                    // Re-throw into outer stream by ending it; the outer caller
+                    // will receive whatever partial message was built.
+                    (outerStream as unknown as { end: (r?: unknown) => void }).end();
+                    return;
+                  }
+
+                  // Stream finished — check final message.
+                  let finalMsg: unknown;
+                  try {
+                    finalMsg = await currentStream.result();
+                  } catch {
+                    finalMsg = undefined;
+                  }
+                  const msg = finalMsg as { stopReason?: unknown; content?: unknown } | undefined;
+
+                  if (!hasContent && isEmptyStop(msg, attempt)) {
+                    const isThinkingOnly =
+                      Array.isArray(msg?.content) && (msg!.content as unknown[]).length > 0;
+                    logWarn("wrapStreamFn.stream: empty/thinking-only stop from Snowflake, retrying", {
+                      modelId,
+                      attempt,
+                      isThinkingOnly,
+                    });
+                    // Discard buffer — nothing was pushed to outerStream.
+                    buffer.length = 0;
+                    const retryResult = inner(model, context, merged as typeof options);
+                    if (
+                      retryResult &&
+                      typeof (retryResult as { result?: unknown })[Symbol.asyncIterator as unknown as string] === "function" &&
+                      typeof (retryResult as { result?: unknown }).result === "function"
+                    ) {
+                      currentStream = retryResult as typeof currentStream;
+                      continue;
+                    }
+                    // Retry returned something unexpected — fall through and end.
+                    (outerStream as unknown as { end: (r?: unknown) => void }).end(finalMsg);
+                    return;
+                  }
+
+                  // Non-empty (or retry exhausted) — flush remaining buffer and end.
+                  for (const buffered of buffer) {
+                    (outerStream as unknown as { push: (e: unknown) => void }).push(buffered);
+                  }
+                  (outerStream as unknown as { end: (r?: unknown) => void }).end(finalMsg);
+                  return;
+                }
+              })();
+              return outerStream as typeof streamResult;
+            }
+
             return streamResult;
           } catch (err) {
             logError("wrapStreamFn.inner ERROR", {
