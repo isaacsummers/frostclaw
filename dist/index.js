@@ -106963,6 +106963,154 @@ function logError(event2, data) {
     console.error(line);
   }
 }
+function isRequestDebugEnabled() {
+  const v = process.env.FROSTCLAW_DEBUG_REQUESTS;
+  if (!v)
+    return false;
+  const s = v.toLowerCase();
+  return s === "1" || s === "true";
+}
+function redactHeaders(headers) {
+  const redacted = {};
+  for (const [k, v] of Object.entries(headers)) {
+    const lower = k.toLowerCase();
+    if (lower === "authorization" || lower === "x-snowflake-token" || lower === "x-api-key") {
+      redacted[k] = "[REDACTED]";
+    } else {
+      redacted[k] = v;
+    }
+  }
+  return redacted;
+}
+function makeDebugFetch(modelId, baseFetch) {
+  return async function debugFetch(input, init) {
+    const ts = new Date().toISOString();
+    const url2 = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const rawHeaders = {};
+    if (init?.headers) {
+      if (init.headers instanceof Headers) {
+        init.headers.forEach((v, k) => {
+          rawHeaders[k] = v;
+        });
+      } else if (Array.isArray(init.headers)) {
+        for (const [k, v] of init.headers)
+          rawHeaders[k] = v;
+      } else {
+        Object.assign(rawHeaders, init.headers);
+      }
+    }
+    const safeHeaders = redactHeaders(rawHeaders);
+    let bodyStr = "";
+    if (init?.body) {
+      bodyStr = typeof init.body === "string" ? init.body : String(init.body);
+      try {
+        bodyStr = JSON.stringify(JSON.parse(bodyStr), null, 2);
+      } catch {}
+    }
+    const reqLine = `[frostclaw:debug] ${ts} → Snowflake | model=${modelId} | url=${url2}`;
+    const reqHeaders = `[frostclaw:debug] request headers: ${JSON.stringify(safeHeaders, null, 2)}`;
+    const reqBody = `[frostclaw:debug] request body:
+${bodyStr}`;
+    if (_pluginLogger) {
+      _pluginLogger.info(reqLine);
+      _pluginLogger.info(reqHeaders);
+      _pluginLogger.info(reqBody);
+    } else {
+      console.log(reqLine);
+      console.log(reqHeaders);
+      console.log(reqBody);
+    }
+    const response = await baseFetch(input, init);
+    const resTs = new Date().toISOString();
+    const status = response.status;
+    const resLine = `[frostclaw:debug] ${resTs} ← Snowflake | model=${modelId} | status=${status}`;
+    if (_pluginLogger) {
+      _pluginLogger.info(resLine);
+    } else {
+      console.log(resLine);
+    }
+    const contentType = response.headers.get("content-type") ?? "";
+    const isSSE = contentType.includes("text/event-stream");
+    if (!isSSE) {
+      const cloned = response.clone();
+      cloned.text().then((text) => {
+        const bodyLine = `[frostclaw:debug] response body:
+${text}`;
+        if (_pluginLogger)
+          _pluginLogger.info(bodyLine);
+        else
+          console.log(bodyLine);
+      }).catch(() => {});
+      return response;
+    }
+    if (!response.body)
+      return response;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder;
+    let eventSeq = 0;
+    let tokenIn = 0;
+    let tokenOut = 0;
+    let stopReason = "";
+    let contentBlockCount = 0;
+    const loggedStream = new ReadableStream({
+      async pull(controller) {
+        const { done, value } = await reader.read();
+        if (done) {
+          const summary = `[frostclaw:debug] response complete | model=${modelId} | input_tokens=${tokenIn} | output_tokens=${tokenOut} | stop_reason=${stopReason} | content_blocks=${contentBlockCount}`;
+          if (_pluginLogger)
+            _pluginLogger.info(summary);
+          else
+            console.log(summary);
+          controller.close();
+          return;
+        }
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split(`
+`);
+        for (const line of lines) {
+          const trimmed = line.trimEnd();
+          if (!trimmed)
+            continue;
+          const lineLog = `[frostclaw:debug] SSE[${eventSeq++}]: ${trimmed}`;
+          if (_pluginLogger)
+            _pluginLogger.info(lineLog);
+          else
+            console.log(lineLog);
+          if (trimmed.startsWith("data: ")) {
+            try {
+              const obj = JSON.parse(trimmed.slice(6));
+              if (obj.type === "message_start") {
+                const usage = obj.message?.usage;
+                if (usage) {
+                  tokenIn = usage.input_tokens ?? 0;
+                }
+              } else if (obj.type === "message_delta") {
+                const delta2 = obj.delta;
+                if (delta2?.stop_reason)
+                  stopReason = String(delta2.stop_reason);
+                const usage = obj.usage;
+                if (usage?.output_tokens)
+                  tokenOut = usage.output_tokens;
+              } else if (obj.type === "content_block_start") {
+                contentBlockCount++;
+              }
+            } catch {}
+          }
+        }
+        controller.enqueue(value);
+      },
+      cancel() {
+        reader.cancel();
+      }
+    });
+    const newResponse = new Response(loggedStream, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers
+    });
+    return newResponse;
+  };
+}
 var BETA_THINKING = [
   "interleaved-thinking-2025-05-14"
 ];
@@ -107197,8 +107345,10 @@ var frostclaw_default = definePluginEntry({
               const optionsApiKey = options3?.apiKey;
               const bearerKey = typeof optionsApiKey === "string" && optionsApiKey.length > 0 ? optionsApiKey : getApiKey();
               const authHeader = isClaudeRoute && bearerKey ? { Authorization: `Bearer ${bearerKey}` } : {};
+              const debugFetchOverride = isRequestDebugEnabled() ? makeDebugFetch(modelId, globalThis.fetch) : undefined;
               const merged = {
                 ...options3,
+                ...debugFetchOverride ? { fetch: debugFetchOverride } : {},
                 headers: {
                   ...options3?.headers,
                   "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN",
