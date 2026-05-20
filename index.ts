@@ -169,155 +169,6 @@ function isRequestDebugEnabled(): boolean {
   return s === "1" || s === "true";
 }
 
-/** Redact sensitive header values. */
-function redactHeaders(headers: Record<string, string>): Record<string, string> {
-  const redacted: Record<string, string> = {};
-  for (const [k, v] of Object.entries(headers)) {
-    const lower = k.toLowerCase();
-    if (lower === "authorization" || lower === "x-snowflake-token" || lower === "x-api-key") {
-      redacted[k] = "[REDACTED]";
-    } else {
-      redacted[k] = v;
-    }
-  }
-  return redacted;
-}
-
-/**
- * Wraps a fetch implementation to log full request + response debug info.
- * Returns a fetch-compatible function. Zero overhead when disabled.
- */
-function makeDebugFetch(
-  modelId: string,
-  baseFetch: typeof fetch
-): typeof fetch {
-  return async function debugFetch(
-    input: RequestInfo | URL,
-    init?: RequestInit
-  ): Promise<Response> {
-    const ts = new Date().toISOString();
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
-
-    // Log request
-    const rawHeaders: Record<string, string> = {};
-    if (init?.headers) {
-      if (init.headers instanceof Headers) {
-        init.headers.forEach((v, k) => { rawHeaders[k] = v; });
-      } else if (Array.isArray(init.headers)) {
-        for (const [k, v] of init.headers) rawHeaders[k] = v;
-      } else {
-        Object.assign(rawHeaders, init.headers as Record<string, string>);
-      }
-    }
-    const safeHeaders = redactHeaders(rawHeaders);
-
-    let bodyStr = "";
-    if (init?.body) {
-      bodyStr = typeof init.body === "string" ? init.body : String(init.body);
-      try { bodyStr = JSON.stringify(JSON.parse(bodyStr), null, 2); } catch { /* not JSON */ }
-    }
-
-    const reqLine = `[frostclaw:debug] ${ts} → Snowflake | model=${modelId} | url=${url}`;
-    const reqHeaders = `[frostclaw:debug] request headers: ${JSON.stringify(safeHeaders, null, 2)}`;
-    const reqBody = `[frostclaw:debug] request body:\n${bodyStr}`;
-    if (_pluginLogger) {
-      _pluginLogger.info(reqLine);
-      _pluginLogger.info(reqHeaders);
-      _pluginLogger.info(reqBody);
-    } else {
-      console.log(reqLine);
-      console.log(reqHeaders);
-      console.log(reqBody);
-    }
-
-    // Make the actual call
-    const response = await baseFetch(input, init);
-    const resTs = new Date().toISOString();
-    const status = response.status;
-
-    const resLine = `[frostclaw:debug] ${resTs} ← Snowflake | model=${modelId} | status=${status}`;
-    if (_pluginLogger) {
-      _pluginLogger.info(resLine);
-    } else {
-      console.log(resLine);
-    }
-
-    const contentType = response.headers.get("content-type") ?? "";
-    const isSSE = contentType.includes("text/event-stream");
-
-    if (!isSSE) {
-      // Non-streaming: clone and log full body
-      const cloned = response.clone();
-      cloned.text().then((text) => {
-        const bodyLine = `[frostclaw:debug] response body:\n${text}`;
-        if (_pluginLogger) _pluginLogger.info(bodyLine);
-        else console.log(bodyLine);
-      }).catch(() => {});
-      return response;
-    }
-
-    // SSE streaming: wrap the body to log each raw line
-    if (!response.body) return response;
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let eventSeq = 0;
-    let tokenIn = 0;
-    let tokenOut = 0;
-    let stopReason = "";
-    let contentBlockCount = 0;
-
-    const loggedStream = new ReadableStream({
-      async pull(controller) {
-        const { done, value } = await reader.read();
-        if (done) {
-          const summary = `[frostclaw:debug] response complete | model=${modelId} | input_tokens=${tokenIn} | output_tokens=${tokenOut} | stop_reason=${stopReason} | content_blocks=${contentBlockCount}`;
-          if (_pluginLogger) _pluginLogger.info(summary);
-          else console.log(summary);
-          controller.close();
-          return;
-        }
-        // Log raw SSE lines
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split("\n");
-        for (const line of lines) {
-          const trimmed = line.trimEnd();
-          if (!trimmed) continue;
-          const lineLog = `[frostclaw:debug] SSE[${eventSeq++}]: ${trimmed}`;
-          if (_pluginLogger) _pluginLogger.info(lineLog);
-          else console.log(lineLog);
-          // Best-effort stat extraction from data: lines
-          if (trimmed.startsWith("data: ")) {
-            try {
-              const obj = JSON.parse(trimmed.slice(6)) as Record<string, unknown>;
-              if (obj.type === "message_start") {
-                const usage = (obj.message as Record<string, unknown> | undefined)?.usage as Record<string, unknown> | undefined;
-                if (usage) { tokenIn = (usage.input_tokens as number) ?? 0; }
-              } else if (obj.type === "message_delta") {
-                const delta = obj.delta as Record<string, unknown> | undefined;
-                if (delta?.stop_reason) stopReason = String(delta.stop_reason);
-                const usage = obj.usage as Record<string, unknown> | undefined;
-                if (usage?.output_tokens) tokenOut = usage.output_tokens as number;
-              } else if (obj.type === "content_block_start") {
-                contentBlockCount++;
-              }
-            } catch { /* not JSON */ }
-          }
-        }
-        controller.enqueue(value);
-      },
-      cancel() { reader.cancel(); },
-    });
-
-    // Build a new Response with the wrapped body
-    const newResponse = new Response(loggedStream, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
-    return newResponse;
-  };
-}
-
 function assertConfig(): void {
   if (!getApiKey()) {
     throw new Error(
@@ -794,14 +645,25 @@ export default definePluginEntry({
                 ? { Authorization: `Bearer ${bearerKey}` }
                 : {};
 
-            // Inject debug fetch wrapper when enabled
-            const debugFetchOverride = isRequestDebugEnabled()
-              ? makeDebugFetch(modelId, globalThis.fetch as typeof fetch)
-              : undefined;
+            // Log request info before calling inner() — stream-level debug logging
+            if (isRequestDebugEnabled()) {
+              const ts = new Date().toISOString();
+              const thinkingInfo = thinkingActive ? `level=${thinkingLevel}` : "off";
+              const ctxRecord = context as Record<string, unknown> | undefined;
+              const msgCount = Array.isArray(ctxRecord?.messages)
+                ? (ctxRecord!.messages as unknown[]).length
+                : 0;
+              const sysPrompt = typeof ctxRecord?.systemPrompt === "string"
+                ? ctxRecord!.systemPrompt as string
+                : "";
+              const maxTok = (options as Record<string, unknown> | undefined)?.maxTokens;
+              _pluginLogger?.info(
+                `[frostclaw:debug] ${ts} → Snowflake | model=${modelId} | attempt=1 | messages=${msgCount} | maxTokens=${maxTok} | thinking=${thinkingInfo} | systemPromptChars=${sysPrompt.length}`
+              );
+            }
 
             const merged = {
               ...options,
-              ...(debugFetchOverride ? { fetch: debugFetchOverride } : {}),
               headers: {
                 ...options?.headers,
                 "X-Snowflake-Authorization-Token-Type":
@@ -891,6 +753,19 @@ export default definePluginEntry({
               return (async () => {
                 let currentResult = streamResult as Promise<unknown>;
                 for (let attempt = 0; attempt <= EMPTY_STOP_MAX_RETRIES; attempt++) {
+                  if (attempt > 0 && isRequestDebugEnabled()) {
+                    const ts = new Date().toISOString();
+                    const ctxRecord2 = context as Record<string, unknown> | undefined;
+                    const msgCount2 = Array.isArray(ctxRecord2?.messages)
+                      ? (ctxRecord2!.messages as unknown[]).length : 0;
+                    const maxTok2 = (options as Record<string, unknown> | undefined)?.maxTokens;
+                    const thinkingInfo2 = thinkingActive ? `level=${thinkingLevel}` : "off";
+                    const sysPrompt2 = typeof ctxRecord2?.systemPrompt === "string"
+                      ? ctxRecord2!.systemPrompt as string : "";
+                    _pluginLogger?.info(
+                      `[frostclaw:debug] ${ts} → Snowflake | model=${modelId} | attempt=${attempt + 1} | messages=${msgCount2} | maxTokens=${maxTok2} | thinking=${thinkingInfo2} | systemPromptChars=${sysPrompt2.length}`
+                    );
+                  }
                   let value: unknown;
                   try {
                     value = await currentResult;
@@ -932,6 +807,14 @@ export default definePluginEntry({
                     // Retry returned a stream — fall through to stream path below
                     return retryResult;
                   }
+                  if (isRequestDebugEnabled()) {
+                    const ts = new Date().toISOString();
+                    const finalObj = valueObj as { stopReason?: unknown; content?: unknown } | undefined;
+                    const contentBlocks = Array.isArray(finalObj?.content) ? (finalObj!.content as unknown[]).length : 0;
+                    _pluginLogger?.info(
+                      `[frostclaw:debug] ${ts} ← Snowflake | model=${modelId} | attempt=${attempt + 1} | stop_reason=${finalObj?.stopReason} | content_blocks=${contentBlocks} | retry=false`
+                    );
+                  }
                   return value;
                 }
               })() as typeof streamResult;
@@ -950,15 +833,67 @@ export default definePluginEntry({
               void (async () => {
                 let currentStream = streamResult as AsyncIterable<unknown> & { result: () => Promise<unknown> };
                 for (let attempt = 0; attempt <= EMPTY_STOP_MAX_RETRIES; attempt++) {
+                  // Log each attempt request (attempt>0 = retry)
+                  if (attempt > 0 && isRequestDebugEnabled()) {
+                    const ts = new Date().toISOString();
+                    const ctxRecord3 = context as Record<string, unknown> | undefined;
+                    const msgCount3 = Array.isArray(ctxRecord3?.messages)
+                      ? (ctxRecord3!.messages as unknown[]).length : 0;
+                    const maxTok3 = (options as Record<string, unknown> | undefined)?.maxTokens;
+                    const thinkingInfo3 = thinkingActive ? `level=${thinkingLevel}` : "off";
+                    const sysPrompt3 = typeof ctxRecord3?.systemPrompt === "string"
+                      ? ctxRecord3!.systemPrompt as string : "";
+                    _pluginLogger?.info(
+                      `[frostclaw:debug] ${ts} → Snowflake | model=${modelId} | attempt=${attempt + 1} | messages=${msgCount3} | maxTokens=${maxTok3} | thinking=${thinkingInfo3} | systemPromptChars=${sysPrompt3.length}`
+                    );
+                  }
                   // Buffer events only until we confirm the stream isn't empty.
                   // For non-empty responses: forward buffered header events then
                   // switch to pass-through. For empty responses: discard buffer
                   // and retry — no events reach the outer stream from this attempt.
                   const buffer: unknown[] = [];
                   let hasContent = false;
+                  let sseSeq = 0;
+                  let _dbgContentLen = 0;
                   try {
                     for await (const event of currentStream) {
                       const evType = (event as { type?: string })?.type;
+                      // Stream-level debug logging
+                      if (isRequestDebugEnabled()) {
+                        const evObj = event as Record<string, unknown>;
+                        if (evType === "message_start") {
+                          const usage = evObj.usage as Record<string, unknown> | undefined;
+                          _pluginLogger?.info(
+                            `[frostclaw:debug] SSE[${sseSeq++}]: ${evType} | input_tokens=${usage?.input_tokens}`
+                          );
+                        } else if (evType === "content_block_delta") {
+                          const delta = evObj.delta as Record<string, unknown> | undefined;
+                          const deltaType = delta?.type as string | undefined;
+                          if (typeof delta?.text === "string") _dbgContentLen += (delta.text as string).length;
+                          if (typeof delta?.partial_json === "string") _dbgContentLen += (delta.partial_json as string).length;
+                          if (typeof delta?.thinking === "string") _dbgContentLen += (delta.thinking as string).length;
+                          _pluginLogger?.info(
+                            `[frostclaw:debug] SSE[${sseSeq++}]: ${evType} | delta_type=${deltaType} | content_len=${_dbgContentLen}`
+                          );
+                        } else if (evType === "message_delta") {
+                          const delta2 = evObj.delta as Record<string, unknown> | undefined;
+                          const usage2 = evObj.usage as Record<string, unknown> | undefined;
+                          _pluginLogger?.info(
+                            `[frostclaw:debug] SSE[${sseSeq++}]: ${evType} | stop_reason=${delta2?.stop_reason} | output_tokens=${usage2?.output_tokens}`
+                          );
+                        } else if (evType === "message_stop") {
+                          _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType}`);
+                        } else if (evType === "content_block_start") {
+                          const cb = evObj.content_block as Record<string, unknown> | undefined;
+                          _pluginLogger?.info(
+                            `[frostclaw:debug] SSE[${sseSeq++}]: ${evType} | block_type=${cb?.type}`
+                          );
+                        } else if (evType === "content_block_stop") {
+                          _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType}`);
+                        } else {
+                          _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType}`);
+                        }
+                      }
                       const isContentEvent =
                         evType === "text_start" ||
                         evType === "text_delta" ||
@@ -1006,7 +941,18 @@ export default definePluginEntry({
                   } catch {
                     finalMsg = undefined;
                   }
-                  const msg = finalMsg as { stopReason?: unknown; content?: unknown } | undefined;
+                  const msg = finalMsg as { stopReason?: unknown; content?: unknown; usage?: unknown } | undefined;
+
+                  // Result logging
+                  if (isRequestDebugEnabled()) {
+                    const ts = new Date().toISOString();
+                    const contentBlocks = Array.isArray(msg?.content) ? (msg!.content as unknown[]).length : 0;
+                    const isEmpty = !hasContent && isEmptyStop(msg, attempt);
+                    const usage = msg?.usage as Record<string, unknown> | undefined;
+                    _pluginLogger?.info(
+                      `[frostclaw:debug] ${ts} ← Snowflake | model=${modelId} | attempt=${attempt + 1} | stop_reason=${msg?.stopReason} | content_blocks=${contentBlocks} | empty_stop=${isEmpty} | input_tokens=${usage?.inputTokens ?? usage?.input_tokens} | output_tokens=${usage?.outputTokens ?? usage?.output_tokens}`
+                    );
+                  }
 
                   if (!hasContent && isEmptyStop(msg, attempt)) {
                     const isThinkingOnly =
