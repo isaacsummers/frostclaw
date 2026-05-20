@@ -745,10 +745,12 @@ export default definePluginEntry({
               );
             }
 
-            // (a) Promise path
+            // (a) Promise path — has .then but NOT .result (AssistantMessageEventStream
+            // has both; use .result presence to distinguish stream from plain Promise)
             if (
               streamResult &&
-              typeof (streamResult as { then?: unknown }).then === "function"
+              typeof (streamResult as { then?: unknown }).then === "function" &&
+              typeof (streamResult as { result?: unknown }).result !== "function"
             ) {
               return (async () => {
                 let currentResult = streamResult as Promise<unknown>;

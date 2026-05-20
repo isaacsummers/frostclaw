@@ -107245,7 +107245,7 @@ var frostclaw_default = definePluginEntry({
               };
               const streamResult = inner(model, context, merged);
               const EMPTY_STOP_MAX_RETRIES = 2;
-              if (streamResult && typeof streamResult.then === "function") {
+              if (streamResult && typeof streamResult.then === "function" && typeof streamResult.result !== "function") {
                 return (async () => {
                   let currentResult = streamResult;
                   for (let attempt = 0;attempt <= EMPTY_STOP_MAX_RETRIES; attempt++) {
