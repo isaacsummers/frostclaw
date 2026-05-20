@@ -394,6 +394,123 @@ export default definePluginEntry({
       // and logging.consoleLevel.
       setPluginLogger(api.logger, api.config);
       log("plugin registered");
+
+      // Install fetch interceptor to transparently retry Snowflake empty-200
+      // SSE responses (message_start → message_stop with no content_block_start).
+      const FETCH_INTERCEPT_MARKER = Symbol.for("frostclaw.fetchIntercepted");
+      if (!(globalThis as Record<symbol, unknown>)[FETCH_INTERCEPT_MARKER]) {
+        (globalThis as Record<symbol, unknown>)[FETCH_INTERCEPT_MARKER] = true;
+        const originalFetch = globalThis.fetch;
+
+        globalThis.fetch = async function frostclawFetch(input, init) {
+          const url = typeof input === "string" ? input : (input as Request).url;
+          if (!url.includes("/v1/messages") || (init?.method ?? "GET").toUpperCase() !== "POST") {
+            return originalFetch(input, init);
+          }
+
+          // Ensure the body is reusable across retries.
+          // The Anthropic SDK serializes bodies as JSON strings, but guard against
+          // the stream case defensively.
+          let bodyForRetry: BodyInit | null | undefined = init?.body;
+          if (bodyForRetry instanceof ReadableStream) {
+            const chunks: Uint8Array[] = [];
+            const reader = (bodyForRetry as ReadableStream<Uint8Array>).getReader();
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              if (value) chunks.push(value);
+            }
+            const total = chunks.reduce((a, c) => a + c.length, 0);
+            const merged = new Uint8Array(total);
+            let off = 0;
+            for (const c of chunks) { merged.set(c, off); off += c.length; }
+            bodyForRetry = merged;
+            _pluginLogger?.info("[frostclaw:fetch] body was ReadableStream — buffered to Uint8Array for retry safety");
+          }
+
+          const FETCH_MAX_RETRIES = 2;
+          for (let attempt = 0; attempt <= FETCH_MAX_RETRIES; attempt++) {
+            const retryInit = bodyForRetry !== init?.body
+              ? { ...init, body: bodyForRetry }
+              : init;
+            const response = await originalFetch(input, retryInit);
+
+            const ct = response.headers.get("content-type") ?? "";
+            if (!ct.includes("text/event-stream") || !response.body) {
+              return response;
+            }
+
+            const chunks: Uint8Array[] = [];
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let accumulated = "";
+            let hasContentBlock = false;
+            let hasMessageStop = false;
+            let done = false;
+
+            while (!done && !hasContentBlock && !hasMessageStop) {
+              const { value, done: readerDone } = await reader.read();
+              done = readerDone;
+              if (value) {
+                chunks.push(value);
+                accumulated += decoder.decode(value, { stream: true });
+                if (accumulated.includes("content_block_start")) hasContentBlock = true;
+                if (accumulated.includes("message_stop")) hasMessageStop = true;
+              }
+            }
+
+            if (hasContentBlock || !hasMessageStop) {
+              const remaining = reader;
+              const combined = new ReadableStream<Uint8Array>({
+                async start(controller) {
+                  for (const chunk of chunks) controller.enqueue(chunk);
+                  while (true) {
+                    const { value, done } = await remaining.read();
+                    if (done) break;
+                    if (value) controller.enqueue(value);
+                  }
+                  controller.close();
+                },
+              });
+              return new Response(combined, {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers,
+              });
+            }
+
+            // Empty-200 detected
+            reader.cancel();
+            if (attempt < FETCH_MAX_RETRIES) {
+              _pluginLogger?.warn(
+                `[frostclaw:fetch] empty-200 detected (attempt ${attempt + 1}/${FETCH_MAX_RETRIES + 1}), retrying...`
+              );
+              await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+              continue;
+            }
+
+            _pluginLogger?.warn(
+              `[frostclaw:fetch] empty-200 persists after ${FETCH_MAX_RETRIES} retries, passing through`
+            );
+            const emptyStream = new ReadableStream<Uint8Array>({
+              start(controller) {
+                for (const chunk of chunks) controller.enqueue(chunk);
+                controller.close();
+              },
+            });
+            return new Response(emptyStream, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers,
+            });
+          }
+          return originalFetch(input, init);
+        };
+        _pluginLogger?.info("[frostclaw:fetch] empty-200 retry interceptor installed");
+      } else {
+        _pluginLogger?.info("[frostclaw:fetch] interceptor already installed, skipping");
+      }
+
       api.registerMemoryEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
       api.registerProvider({
       id: "snowflake-cortex",
