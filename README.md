@@ -92,6 +92,30 @@ See [Snowflake embed API docs](https://docs.snowflake.com/en/user-guide/snowflak
 | `SNOWFLAKE_CORTEX_API_KEY` | No | Fallback for `SNOWFLAKE_PAT` |
 | `SNOWFLAKE_CORTEX_PROXY_PORT` | No | Unified proxy port (default: `18790`) |
 
+### CLI
+
+The `frostclaw` CLI manages plugin builds and service lifecycle.
+
+**Install:**
+
+```sh
+./install.sh
+```
+
+This symlinks `bin/frostclaw` into `${XDG_BIN_HOME:-~/.local/bin}`. To use a different directory, set `XDG_BIN_HOME` before running.
+
+**Available commands:**
+
+- `build` — Build `dist/index.js` from source and write `dist/BUILD_SHA`
+- `restart` — Build, then restart the proxy and gateway services
+- `update` — `git pull` → build → `openclaw update` → restart both services
+- `status` — Show git, build, proxy, and gateway status
+- `verify` — Check build freshness and service health; exits 1 on failure
+- `proxy` — Manage `snowflake-proxy.service` (`restart` / `status` / `logs`)
+- `gateway` — Manage `openclaw-gateway.service` (`restart` / `status` / `logs`)
+
+Run `frostclaw help` for the full command list, or `frostclaw <cmd> -h` for per-command usage.
+
 ### Install
 
 Copy the plugin into your OpenClaw extensions directory:

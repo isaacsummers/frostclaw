@@ -1,0 +1,740 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+FROSTCLAW_DIR="$HOME/projects/frostclaw"
+
+# ---------------------------------------------------------------------------
+# Colour helpers (only when stdout is a terminal)
+# ---------------------------------------------------------------------------
+if [ -t 1 ]; then
+  GREEN=$(tput setaf 2)
+  YELLOW=$(tput setaf 3)
+  RED=$(tput setaf 1)
+  RESET=$(tput sgr0)
+  BOLD=$(tput bold)
+else
+  GREEN="" YELLOW="" RED="" RESET="" BOLD=""
+fi
+
+ok()   { echo "${GREEN}✅${RESET} $*"; }
+warn() { echo "${YELLOW}⚠️${RESET}  $*"; }
+fail() { echo "${RED}❌${RESET} $*"; }
+info() { echo "${BOLD}→${RESET} $*"; }
+
+# ---------------------------------------------------------------------------
+# Helper: returns 0 if any arg is -h or --help
+# ---------------------------------------------------------------------------
+has_help_flag() {
+  for arg in "$@"; do
+    case "$arg" in -h|--help) return 0 ;; esac
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Help texts — one per command/group
+# ---------------------------------------------------------------------------
+help_main() {
+  cat <<EOF
+
+${BOLD}frostclaw${RESET} — frostclaw plugin build & lifecycle tool
+
+${BOLD}Usage:${RESET}
+  frostclaw <command> [args]
+
+${BOLD}Commands:${RESET}
+  build                 Build dist/index.js from source and write dist/BUILD_SHA
+  restart               build → restart snowflake-proxy → restart openclaw-gateway
+  update                git pull → build → openclaw update → restart both services
+  status                Show git, build, proxy, and gateway status
+  verify                Exit-1 if build is stale, sources are dirty, or services are down
+  proxy <subcommand>    Manage snowflake-proxy.service  (restart / status / logs)
+  gateway <subcommand>  Manage openclaw-gateway.service (restart / status / logs)
+  completions <shell>   Print shell completion script (bash, zsh)
+  help                  Show this message
+
+Use \`frostclaw <command> -h\` for subcommand help.
+
+EOF
+}
+
+help_build() {
+  cat <<EOF
+
+${BOLD}frostclaw build${RESET} — Build the frostclaw plugin
+
+${BOLD}Usage:${RESET}
+  frostclaw build [-h]
+
+Builds dist/index.js from source using bun, then writes the current git HEAD
+SHA to dist/BUILD_SHA.
+
+${BOLD}Flags:${RESET}
+  -h, --help   Show this message
+
+EOF
+}
+
+help_restart() {
+  cat <<EOF
+
+${BOLD}frostclaw restart${RESET} — Build and restart all services
+
+${BOLD}Usage:${RESET}
+  frostclaw restart [-h]
+
+Runs the full restart sequence:
+  1. frostclaw build
+  2. systemctl --user restart snowflake-proxy.service
+  3. systemctl --user restart openclaw-gateway.service
+
+To restart a single service, use \`frostclaw proxy restart\` or
+\`frostclaw gateway restart\`.
+
+${BOLD}Flags:${RESET}
+  -h, --help   Show this message
+
+EOF
+}
+
+help_update() {
+  cat <<EOF
+
+${BOLD}frostclaw update${RESET} — Pull, build, and restart everything
+
+${BOLD}Usage:${RESET}
+  frostclaw update [-h]
+
+Full update sequence:
+  1. git pull
+  2. frostclaw build
+  3. openclaw update --no-restart --yes
+  4. systemctl --user restart snowflake-proxy.service
+  5. systemctl --user restart openclaw-gateway.service
+
+${BOLD}Flags:${RESET}
+  -h, --help   Show this message
+
+EOF
+}
+
+help_status() {
+  cat <<EOF
+
+${BOLD}frostclaw status${RESET} — Show overall plugin and service status
+
+${BOLD}Usage:${RESET}
+  frostclaw status [-h]
+
+Displays:
+  - Git branch, HEAD SHA, and working tree status
+  - Build SHA vs HEAD SHA (stale detection)
+  - .ts source freshness vs dist/index.js
+  - snowflake-proxy.service state and uptime
+  - openclaw-gateway.service state and uptime
+
+${BOLD}Flags:${RESET}
+  -h, --help   Show this message
+
+EOF
+}
+
+help_verify() {
+  cat <<EOF
+
+${BOLD}frostclaw verify${RESET} — Verify build and service health (exits 1 on failure)
+
+${BOLD}Usage:${RESET}
+  frostclaw verify [-h]
+
+Runs four checks and exits 1 if any fail:
+  1. BUILD_SHA matches git HEAD
+  2. No .ts source files newer than dist/index.js
+  3. snowflake-proxy.service is active
+  4. openclaw-gateway.service is active
+
+${BOLD}Flags:${RESET}
+  -h, --help   Show this message
+
+EOF
+}
+
+help_proxy() {
+  cat <<EOF
+
+${BOLD}frostclaw proxy${RESET} — Manage snowflake-proxy.service
+
+${BOLD}Usage:${RESET}
+  frostclaw proxy <subcommand> [-h]
+
+${BOLD}Subcommands:${RESET}
+  restart   Restart snowflake-proxy.service only
+  status    Show service state and uptime for snowflake-proxy.service
+  logs      Show last 50 log lines from snowflake-proxy.service
+
+${BOLD}Flags:${RESET}
+  -h, --help   Show this message
+
+EOF
+}
+
+help_gateway() {
+  cat <<EOF
+
+${BOLD}frostclaw gateway${RESET} — Manage openclaw-gateway.service
+
+${BOLD}Usage:${RESET}
+  frostclaw gateway <subcommand> [-h]
+
+${BOLD}Subcommands:${RESET}
+  restart   Restart openclaw-gateway.service only
+  status    Show service state and uptime for openclaw-gateway.service
+  logs      Show last 50 log lines from openclaw-gateway.service
+
+${BOLD}Flags:${RESET}
+  -h, --help   Show this message
+
+EOF
+}
+
+help_completions() {
+  cat <<EOF
+
+${BOLD}frostclaw completions${RESET} — Print shell completion script
+
+${BOLD}Usage:${RESET}
+  frostclaw completions <shell> [-h]
+
+Prints a self-contained completion script to stdout.
+
+${BOLD}Shells:${RESET}
+  bash   Bash completion script
+  zsh    Zsh completion script
+
+${BOLD}Example:${RESET}
+  source <(frostclaw completions bash)
+  source <(frostclaw completions zsh)
+
+${BOLD}Flags:${RESET}
+  -h, --help   Show this message
+
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# build
+# ---------------------------------------------------------------------------
+cmd_build() {
+  has_help_flag "$@" && { help_build; return 0; }
+  info "Building frostclaw..."
+  cd "$FROSTCLAW_DIR"
+  SHA=$(git rev-parse HEAD)
+  info "HEAD SHA: $SHA"
+  info "Running bun build..."
+  bun build ./index.ts --outfile ./dist/index.js --bundle --external 'openclaw'
+  echo "$SHA" > ./dist/BUILD_SHA
+  ok "Build complete — dist/BUILD_SHA written ($SHA)"
+}
+
+# ---------------------------------------------------------------------------
+# restart
+# ---------------------------------------------------------------------------
+cmd_restart() {
+  has_help_flag "$@" && { help_restart; return 0; }
+
+  info "Step 1/3: frostclaw build"
+  cmd_build || { fail "Build failed"; exit 1; }
+
+  info "Step 2/3: restarting snowflake-proxy.service"
+  systemctl --user restart snowflake-proxy.service || { fail "snowflake-proxy.service restart failed"; exit 1; }
+  ok "snowflake-proxy.service restarted"
+
+  info "Step 3/3: restarting openclaw-gateway.service"
+  systemctl --user restart openclaw-gateway.service || { fail "openclaw-gateway.service restart failed"; exit 1; }
+  ok "openclaw-gateway.service restarted"
+
+  ok "Restart complete"
+}
+
+# ---------------------------------------------------------------------------
+# update
+# ---------------------------------------------------------------------------
+cmd_update() {
+  has_help_flag "$@" && { help_update; return 0; }
+
+  info "Step 1/5: git pull"
+  git -C "$FROSTCLAW_DIR" pull || { fail "git pull failed"; exit 1; }
+  ok "git pull complete"
+
+  info "Step 2/5: frostclaw build"
+  cmd_build || { fail "Build failed"; exit 1; }
+
+  info "Step 3/5: openclaw update --no-restart --yes"
+  openclaw update --no-restart --yes || { fail "openclaw update failed"; exit 1; }
+  ok "openclaw update complete"
+
+  info "Step 4/5: restarting snowflake-proxy.service"
+  systemctl --user restart snowflake-proxy.service || { fail "snowflake-proxy.service restart failed"; exit 1; }
+  ok "snowflake-proxy.service restarted"
+
+  info "Step 5/5: restarting openclaw-gateway.service"
+  systemctl --user restart openclaw-gateway.service || { fail "openclaw-gateway.service restart failed"; exit 1; }
+  ok "openclaw-gateway.service restarted"
+
+  ok "Update complete"
+}
+
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+cmd_status() {
+  has_help_flag "$@" && { help_status; return 0; }
+
+  echo ""
+  echo "${BOLD}━━━ frostclaw status ━━━${RESET}"
+  echo ""
+
+  # --- Git ---
+  echo "${BOLD}Git${RESET}"
+  cd "$FROSTCLAW_DIR"
+  BRANCH=$(git rev-parse --abbrev-ref HEAD)
+  HEAD_SHA=$(git rev-parse HEAD)
+  if git diff --quiet && git diff --cached --quiet; then
+    TREE_STATUS="${GREEN}clean${RESET}"
+  else
+    TREE_STATUS="${YELLOW}dirty${RESET}"
+  fi
+  echo "  Branch:  $BRANCH"
+  echo "  HEAD:    $HEAD_SHA"
+  echo "  Tree:    ${TREE_STATUS}"
+  echo ""
+
+  # --- Build ---
+  echo "${BOLD}Build${RESET}"
+  BUILD_SHA_FILE="$FROSTCLAW_DIR/dist/BUILD_SHA"
+  DIST_JS="$FROSTCLAW_DIR/dist/index.js"
+
+  if [ ! -f "$BUILD_SHA_FILE" ]; then
+    warn "dist/BUILD_SHA not found — never built?"
+    BUILD_SHA="(none)"
+    SHA_MATCH=false
+  else
+    BUILD_SHA=$(cat "$BUILD_SHA_FILE")
+    if [ "$BUILD_SHA" = "$HEAD_SHA" ]; then
+      SHA_MATCH=true
+    else
+      SHA_MATCH=false
+    fi
+  fi
+
+  if $SHA_MATCH; then
+    echo "  SHA match: $(ok "dist/BUILD_SHA matches HEAD ($BUILD_SHA)")"
+  else
+    echo "  SHA match: $(warn "STALE — dist/BUILD_SHA=${BUILD_SHA} HEAD=${HEAD_SHA}")"
+  fi
+
+  if [ ! -f "$DIST_JS" ]; then
+    echo "  Sources:   $(warn "dist/index.js not found")"
+  else
+    NEWER_TS=$(find "$FROSTCLAW_DIR" -maxdepth 2 -name '*.ts' -newer "$DIST_JS" 2>/dev/null | grep -v node_modules || true)
+    if [ -z "$NEWER_TS" ]; then
+      echo "  Sources:   $(ok "no .ts files newer than dist/index.js")"
+    else
+      echo "  Sources:   $(warn ".ts files newer than dist/index.js:")"
+      while IFS= read -r f; do
+        echo "             $f"
+      done <<< "$NEWER_TS"
+    fi
+  fi
+  echo ""
+
+  # --- Proxy ---
+  echo "${BOLD}snowflake-proxy.service${RESET}"
+  PROXY_STATE=$(systemctl --user is-active snowflake-proxy.service 2>/dev/null || true)
+  PROXY_TS=$(systemctl --user show snowflake-proxy.service --property=ActiveEnterTimestamp 2>/dev/null | cut -d= -f2 || true)
+  if [ "$PROXY_STATE" = "active" ]; then
+    echo "  State:   $(ok "active")"
+  else
+    echo "  State:   $(fail "$PROXY_STATE")"
+  fi
+  echo "  Since:   ${PROXY_TS:-unknown}"
+  echo ""
+
+  # --- Gateway ---
+  echo "${BOLD}openclaw-gateway.service${RESET}"
+  GW_STATE=$(systemctl --user is-active openclaw-gateway.service 2>/dev/null || true)
+  GW_TS=$(systemctl --user show openclaw-gateway.service --property=ActiveEnterTimestamp 2>/dev/null | cut -d= -f2 || true)
+  if [ "$GW_STATE" = "active" ]; then
+    echo "  State:   $(ok "active")"
+  else
+    echo "  State:   $(fail "$GW_STATE")"
+  fi
+  echo "  Since:   ${GW_TS:-unknown}"
+  echo ""
+
+  # --- Running build summary ---
+  echo "${BOLD}Running build${RESET}"
+  if $SHA_MATCH 2>/dev/null; then
+    echo "  $(ok "SHA: $BUILD_SHA")"
+  else
+    echo "  $(warn "Build SHA: ${BUILD_SHA:-none}")"
+    echo "  $(warn "Head  SHA: $HEAD_SHA")"
+    echo "  ${YELLOW}⚠️${RESET}  Mismatch — run \`frostclaw build\` or \`frostclaw restart\`"
+  fi
+  echo ""
+}
+
+# ---------------------------------------------------------------------------
+# verify
+# ---------------------------------------------------------------------------
+cmd_verify() {
+  has_help_flag "$@" && { help_verify; return 0; }
+
+  echo ""
+  echo "${BOLD}━━━ frostclaw verify ━━━${RESET}"
+  echo ""
+
+  ALL_PASS=true
+  cd "$FROSTCLAW_DIR"
+  HEAD_SHA=$(git rev-parse HEAD)
+
+  # Check 1: BUILD_SHA matches HEAD
+  BUILD_SHA_FILE="$FROSTCLAW_DIR/dist/BUILD_SHA"
+  if [ -f "$BUILD_SHA_FILE" ]; then
+    BUILD_SHA=$(cat "$BUILD_SHA_FILE")
+    if [ "$BUILD_SHA" = "$HEAD_SHA" ]; then
+      ok  "BUILD_SHA matches HEAD ($BUILD_SHA)"
+    else
+      fail "BUILD_SHA mismatch — built=$BUILD_SHA head=$HEAD_SHA"
+      ALL_PASS=false
+    fi
+  else
+    fail "BUILD_SHA file missing — never built"
+    ALL_PASS=false
+  fi
+
+  # Check 2: no .ts source newer than dist/index.js
+  DIST_JS="$FROSTCLAW_DIR/dist/index.js"
+  if [ ! -f "$DIST_JS" ]; then
+    fail "dist/index.js not found"
+    ALL_PASS=false
+  else
+    NEWER_TS=$(find "$FROSTCLAW_DIR" -maxdepth 2 -name '*.ts' -newer "$DIST_JS" 2>/dev/null | grep -v node_modules || true)
+    if [ -z "$NEWER_TS" ]; then
+      ok  "No .ts source files newer than dist/index.js"
+    else
+      fail ".ts files newer than dist/index.js: $(echo "$NEWER_TS" | tr '\n' ' ')"
+      ALL_PASS=false
+    fi
+  fi
+
+  # Check 3: snowflake-proxy active
+  PROXY_STATE=$(systemctl --user is-active snowflake-proxy.service 2>/dev/null || true)
+  if [ "$PROXY_STATE" = "active" ]; then
+    ok  "snowflake-proxy.service is active"
+  else
+    fail "snowflake-proxy.service is $PROXY_STATE"
+    ALL_PASS=false
+  fi
+
+  # Check 4: gateway active
+  GW_STATE=$(systemctl --user is-active openclaw-gateway.service 2>/dev/null || true)
+  if [ "$GW_STATE" = "active" ]; then
+    ok  "openclaw-gateway.service is active"
+  else
+    fail "openclaw-gateway.service is $GW_STATE"
+    ALL_PASS=false
+  fi
+
+  echo ""
+  if $ALL_PASS; then
+    echo "${GREEN}${BOLD}PASS${RESET}"
+    exit 0
+  else
+    echo "${RED}${BOLD}FAIL${RESET}"
+    exit 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# proxy <subcommand>
+# ---------------------------------------------------------------------------
+cmd_proxy() {
+  local subcmd="${1:-}"
+  shift || true
+
+  # No subcommand or help flag as subcommand → show proxy help
+  case "$subcmd" in
+    ""|-h|--help) help_proxy; return 0 ;;
+  esac
+
+  # -h/--help anywhere in remaining args → proxy group help
+  has_help_flag "$@" && { help_proxy; return 0; }
+
+  case "$subcmd" in
+    restart)
+      info "Restarting snowflake-proxy.service..."
+      systemctl --user restart snowflake-proxy.service || { fail "snowflake-proxy.service restart failed"; exit 1; }
+      ok "snowflake-proxy.service restarted"
+      ;;
+    status)
+      echo ""
+      echo "${BOLD}snowflake-proxy.service${RESET}"
+      local proxy_state
+      proxy_state=$(systemctl --user is-active snowflake-proxy.service 2>/dev/null || true)
+      local proxy_ts
+      proxy_ts=$(systemctl --user show snowflake-proxy.service --property=ActiveEnterTimestamp 2>/dev/null | cut -d= -f2 || true)
+      if [ "$proxy_state" = "active" ]; then
+        echo "  State:   $(ok "active")"
+      else
+        echo "  State:   $(fail "$proxy_state")"
+      fi
+      echo "  Since:   ${proxy_ts:-unknown}"
+      echo ""
+      ;;
+    logs)
+      journalctl --user -u snowflake-proxy.service -n 50 --no-pager
+      ;;
+    *)
+      fail "Unknown proxy subcommand: $subcmd"
+      help_proxy
+      exit 1
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# gateway <subcommand>
+# ---------------------------------------------------------------------------
+cmd_gateway() {
+  local subcmd="${1:-}"
+  shift || true
+
+  # No subcommand or help flag as subcommand → show gateway help
+  case "$subcmd" in
+    ""|-h|--help) help_gateway; return 0 ;;
+  esac
+
+  # -h/--help anywhere in remaining args → gateway group help
+  has_help_flag "$@" && { help_gateway; return 0; }
+
+  case "$subcmd" in
+    restart)
+      info "Restarting openclaw-gateway.service..."
+      systemctl --user restart openclaw-gateway.service || { fail "openclaw-gateway.service restart failed"; exit 1; }
+      ok "openclaw-gateway.service restarted"
+      ;;
+    status)
+      echo ""
+      echo "${BOLD}openclaw-gateway.service${RESET}"
+      local gw_state
+      gw_state=$(systemctl --user is-active openclaw-gateway.service 2>/dev/null || true)
+      local gw_ts
+      gw_ts=$(systemctl --user show openclaw-gateway.service --property=ActiveEnterTimestamp 2>/dev/null | cut -d= -f2 || true)
+      if [ "$gw_state" = "active" ]; then
+        echo "  State:   $(ok "active")"
+      else
+        echo "  State:   $(fail "$gw_state")"
+      fi
+      echo "  Since:   ${gw_ts:-unknown}"
+      echo ""
+      ;;
+    logs)
+      journalctl --user -u openclaw-gateway.service -n 50 --no-pager
+      ;;
+    *)
+      fail "Unknown gateway subcommand: $subcmd"
+      help_gateway
+      exit 1
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# completions
+# ---------------------------------------------------------------------------
+cmd_completions() {
+  has_help_flag "$@" && { help_completions; return 0; }
+
+  local shell="${1:-}"
+  if [ -z "$shell" ]; then
+    fail "Shell not specified. Usage: frostclaw completions bash|zsh"
+    help_completions
+    exit 1
+  fi
+
+  case "$shell" in
+    bash) _completions_bash ;;
+    zsh)  _completions_zsh  ;;
+    *)
+      fail "Unsupported shell: $shell. Supported: bash, zsh"
+      exit 1
+      ;;
+  esac
+}
+
+_completions_bash() {
+  cat <<'BASH_COMPLETION'
+# frostclaw bash completion
+#
+# Install instructions:
+#   Option 1 — source directly in ~/.bashrc (add this line):
+#     source <(frostclaw completions bash)
+#
+#   Option 2 — save to a file (faster shell startup):
+#     mkdir -p ~/.bash_completion.d
+#     frostclaw completions bash > ~/.bash_completion.d/frostclaw
+#     # Add to ~/.bashrc:
+#     source ~/.bash_completion.d/frostclaw
+
+_frostclaw_completions() {
+  local cur prev
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  local top_cmds="build restart update status verify proxy gateway completions help"
+  local service_cmds="restart status logs"
+  local shells="bash zsh"
+
+  # Top-level subcommand
+  if [[ $COMP_CWORD -eq 1 ]]; then
+    COMPREPLY=( $(compgen -W "$top_cmds -h --help" -- "$cur") )
+    return 0
+  fi
+
+  local cmd="${COMP_WORDS[1]}"
+
+  # Second-level completions
+  if [[ $COMP_CWORD -eq 2 ]]; then
+    case "$cmd" in
+      proxy|gateway)
+        COMPREPLY=( $(compgen -W "$service_cmds -h --help" -- "$cur") )
+        return 0
+        ;;
+      completions)
+        COMPREPLY=( $(compgen -W "$shells -h --help" -- "$cur") )
+        return 0
+        ;;
+      build|restart|update|status|verify)
+        COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+        return 0
+        ;;
+    esac
+  fi
+
+  # Third-level: flags for proxy/gateway subcommands
+  if [[ $COMP_CWORD -eq 3 ]]; then
+    case "$cmd" in
+      proxy|gateway)
+        COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+        return 0
+        ;;
+    esac
+  fi
+
+  return 0
+}
+
+complete -F _frostclaw_completions frostclaw
+BASH_COMPLETION
+}
+
+_completions_zsh() {
+  cat <<'ZSH_COMPLETION'
+#compdef frostclaw
+#
+# frostclaw zsh completion
+#
+# Install instructions:
+#   Option 1 — source directly in ~/.zshrc (after compinit, add this line):
+#     source <(frostclaw completions zsh)
+#
+#   Option 2 — save to fpath (faster, recommended):
+#     frostclaw completions zsh > "${fpath[1]}/_frostclaw"
+#     # Then restart zsh or run: autoload -Uz compinit && compinit -C
+
+_frostclaw() {
+  local context state state_descr line
+  typeset -A opt_args
+
+  _arguments -C \
+    '(-h --help)'{-h,--help}'[Show help and exit]' \
+    '1: :->command' \
+    '*: :->args' && return 0
+
+  case $state in
+    command)
+      local -a cmds
+      cmds=(
+        'build:Build dist/index.js from source and write dist/BUILD_SHA'
+        'restart:Build and restart both services (proxy + gateway)'
+        'update:git pull → build → openclaw update → restart both services'
+        'status:Show git, build, proxy, and gateway status'
+        'verify:Check build freshness and service health (exits 1 on failure)'
+        'proxy:Manage snowflake-proxy.service (restart / status / logs)'
+        'gateway:Manage openclaw-gateway.service (restart / status / logs)'
+        'completions:Print shell completion script (bash, zsh)'
+        'help:Show help'
+      )
+      _describe 'command' cmds
+      ;;
+
+    args)
+      case ${words[2]} in
+        proxy|gateway)
+          local -a sub
+          sub=(
+            'restart:Restart the service'
+            'status:Show service state and uptime'
+            'logs:Show last 50 log lines'
+          )
+          _arguments \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '1: :->subcmd' && return 0
+          _describe 'subcommand' sub
+          ;;
+        completions)
+          local -a shells
+          shells=('bash:Bash completion script' 'zsh:Zsh completion script')
+          _arguments \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '1: :->shell' && return 0
+          _describe 'shell' shells
+          ;;
+        build|restart|update|status|verify)
+          _arguments '(-h --help)'{-h,--help}'[Show help]'
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_frostclaw "$@"
+ZSH_COMPLETION
+}
+
+# ---------------------------------------------------------------------------
+# help / dispatch
+# ---------------------------------------------------------------------------
+cmd_help() {
+  help_main
+}
+
+# Dispatch — pass remaining args so each command can see -h/--help
+case "${1:-help}" in
+  build)       cmd_build       "${@:2}" ;;
+  restart)     cmd_restart     "${@:2}" ;;
+  update)      cmd_update      "${@:2}" ;;
+  status)      cmd_status      "${@:2}" ;;
+  verify)      cmd_verify      "${@:2}" ;;
+  proxy)       cmd_proxy       "${@:2}" ;;
+  gateway)     cmd_gateway     "${@:2}" ;;
+  completions) cmd_completions "${@:2}" ;;
+  help|-h|--help) cmd_help ;;
+  *)
+    fail "Unknown command: $1"
+    cmd_help
+    exit 1
+    ;;
+esac
