@@ -44,7 +44,8 @@ export type ModelDefinitionConfig = {
 // ---------------------------------------------------------------------------
 
 export function getCatalogBaseURL(): string {
-  return process.env.SNOWFLAKE_PROXY_BASE_URL ?? process.env.SNOWFLAKE_BASE_URL ?? "";
+  const raw = process.env.SNOWFLAKE_PROXY_BASE_URL ?? process.env.SNOWFLAKE_BASE_URL ?? "";
+  return raw ? `${raw.replace(/\/$/, "")}/api/v2/cortex` : "";
 }
 
 // ---------------------------------------------------------------------------

@@ -7,11 +7,11 @@
  * Handles all three Snowflake Cortex API surfaces on one port.
  *
  * Routes:
- *   POST /v1/embeddings       → Snowflake inference:embed  (with batching/coalescing)
- *   POST /v1/messages         → Snowflake cortex/v1/messages  (Anthropic, with header normalisation)
- *   POST /v1/chat/completions → Snowflake cortex/v1/chat/completions  (OpenAI-compat passthrough)
- *   GET  /health              → {"status":"ok",...}
- *   *                         → 404
+ *   POST /v1/embeddings             → Snowflake inference:embed  (with batching/coalescing)
+ *   POST /api/v2/cortex/v1/messages  → Snowflake cortex/v1/messages  (Anthropic, with header normalisation)
+ *   POST /api/v2/cortex/v1/chat/completions → Snowflake cortex/v1/chat/completions  (OpenAI-compat passthrough)
+ *   GET  /health                      → {"status":"ok",...}
+ *   *                                 → 404
  *
  * Auth translation (all routes):
  *   Client sends:  x-api-key: <anything> (or nothing)
@@ -362,7 +362,7 @@ export function createProxyServer(config) {
         JSON.stringify({
           status: "ok",
           provider: "snowflake-cortex",
-          routes: ["embeddings", "messages", "chat/completions"],
+          routes: ["embeddings", "api/v2/cortex/v1/messages", "api/v2/cortex/v1/chat/completions", "api/v2/cortex/inference:embed"],
           embedModels: [...SUPPORTED_EMBED_MODELS],
         }),
       );
@@ -417,8 +417,8 @@ export function createProxyServer(config) {
       return;
     }
 
-    // ── POST /v1/messages ──────────────────────────────────────────────────
-    if (req.method === "POST" && req.url === "/v1/messages") {
+    // ── POST /api/v2/cortex/v1/messages ────────────────────────────────────
+    if (req.method === "POST" && req.url === "/api/v2/cortex/v1/messages") {
       try {
         const rawBody = await readBody(req);
         let body;
@@ -478,8 +478,8 @@ export function createProxyServer(config) {
       return;
     }
 
-    // ── POST /v1/chat/completions ──────────────────────────────────────────
-    if (req.method === "POST" && req.url === "/v1/chat/completions") {
+    // ── POST /api/v2/cortex/v1/chat/completions ──────────────────────────
+    if (req.method === "POST" && req.url === "/api/v2/cortex/v1/chat/completions") {
       try {
         const rawBody = await readBody(req);
         let body;
@@ -537,12 +537,35 @@ export function createProxyServer(config) {
       return;
     }
 
+    // ── POST /api/v2/cortex/inference:embed ───────────────────────────────
+    // Native passthrough for frostclaw's internal embed adapter. The body is
+    // already in Snowflake's native shape ({ text, model }) — no translation
+    // needed. Auth headers are injected by proxyRequest via buildForwardHeaders.
+    if (req.method === "POST" && req.url === "/api/v2/cortex/inference:embed") {
+      try {
+        await proxyRequest(
+          req,
+          res,
+          `${baseUrl}/api/v2/cortex/inference:embed`,
+        );
+      } catch (err) {
+        console.error("[frostclaw] inference:embed proxy error:", err.message);
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+        }
+        res.end(
+          JSON.stringify({ error: { message: err.message, type: "proxy_error" } }),
+        );
+      }
+      return;
+    }
+
     // ── Catch-all 404 ──────────────────────────────────────────────────────
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(
       JSON.stringify({
         error:
-          "Not found. Available routes: POST /v1/embeddings, POST /v1/messages, POST /v1/chat/completions, GET /health",
+          "Not found. Available routes: POST /v1/embeddings, POST /api/v2/cortex/v1/messages, POST /api/v2/cortex/v1/chat/completions, POST /api/v2/cortex/inference:embed, GET /health",
       }),
     );
   });

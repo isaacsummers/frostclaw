@@ -236,7 +236,7 @@ describe("POST /v1/messages", () => {
       res.end(JSON.stringify({ id: "msg_test", type: "message" }));
     });
 
-    const res = await fetch(`http://127.0.0.1:${proxyPort}/v1/messages`, {
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/api/v2/cortex/v1/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -269,7 +269,7 @@ describe("POST /v1/messages", () => {
       res.end(JSON.stringify({ id: "msg_test", type: "message" }));
     });
 
-    const res = await fetch(`http://127.0.0.1:${proxyPort}/v1/messages`, {
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/api/v2/cortex/v1/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -321,7 +321,7 @@ describe("POST /v1/messages", () => {
       );
     });
 
-    const res = await fetch(`http://127.0.0.1:${proxyPort}/v1/messages`, {
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/api/v2/cortex/v1/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -342,7 +342,7 @@ describe("POST /v1/messages", () => {
 // POST /v1/chat/completions
 // ---------------------------------------------------------------------------
 
-describe("POST /v1/chat/completions", () => {
+describe("POST /api/v2/cortex/v1/chat/completions", () => {
   test("max_tokens rewrite and model prefix stripping", async () => {
     let upstreamBody: Record<string, unknown> = {};
     mock.setHandler(async (req, res) => {
@@ -351,7 +351,7 @@ describe("POST /v1/chat/completions", () => {
       res.end(JSON.stringify({ id: "chat_test", choices: [] }));
     });
 
-    const res = await fetch(`http://127.0.0.1:${proxyPort}/v1/chat/completions`, {
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/api/v2/cortex/v1/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -373,7 +373,7 @@ describe("POST /v1/chat/completions", () => {
       res.end();
     });
 
-    const res = await fetch(`http://127.0.0.1:${proxyPort}/v1/chat/completions`, {
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/api/v2/cortex/v1/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -390,7 +390,57 @@ describe("POST /v1/chat/completions", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 404 catch-all
+// POST /api/v2/cortex/inference:embed (native passthrough)
+// ---------------------------------------------------------------------------
+
+describe("POST /api/v2/cortex/inference:embed", () => {
+  test("passes body through unchanged and injects auth headers", async () => {
+    let capturedHeaders: Record<string, string> = {};
+    let capturedBody: Record<string, unknown> = {};
+
+    mock.setHandler(async (req, res) => {
+      for (const [k, v] of Object.entries(req.headers)) {
+        if (typeof v === "string") capturedHeaders[k] = v;
+      }
+      capturedBody = JSON.parse(await readBody(req)) as Record<string, unknown>;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ data: [{ embedding: [0.9, 0.8, 0.7] }] }));
+    });
+
+    const nativePayload = {
+      text: ["hello", "world"],
+      model: "snowflake-arctic-embed-l-v2.0",
+    };
+
+    const res = await fetch(
+      `http://127.0.0.1:${proxyPort}/api/v2/cortex/inference:embed`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": "should-be-stripped" },
+        body: JSON.stringify(nativePayload),
+      },
+    );
+    expect(res.status).toBe(200);
+
+    // Body forwarded as-is (native shape: `text` not `input`)
+    expect(capturedBody["text"]).toEqual(["hello", "world"]);
+    expect(capturedBody["model"]).toBe("snowflake-arctic-embed-l-v2.0");
+    expect(capturedBody).not.toHaveProperty("input");
+
+    // Auth injected, client key stripped
+    expect(capturedHeaders["authorization"]).toBe("Bearer test-pat-token");
+    expect(capturedHeaders["x-snowflake-authorization-token-type"]).toBe(
+      "PROGRAMMATIC_ACCESS_TOKEN",
+    );
+    expect(capturedHeaders["x-api-key"]).toBeUndefined();
+
+    // Response forwarded
+    const body = (await res.json()) as { data: Array<{ embedding: number[] }> };
+    expect(body.data[0].embedding).toEqual([0.9, 0.8, 0.7]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 
 test("POST /unknown-route returns 404", async () => {

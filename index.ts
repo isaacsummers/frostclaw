@@ -31,6 +31,7 @@ import type {
 import {
   buildModelCatalog,
   findCatalogEntry,
+  getCatalogBaseURL,
 } from "./src/catalog.js";
 import { applyEagerInputStreamingStrip } from "./src/onpayload.js";
 
@@ -311,14 +312,19 @@ async function snowflakeEmbed(
   model: string,
 ): Promise<number[][]> {
   const apiKey = getApiKey();
-  const baseUrl = getBaseURL();
-  if (!apiKey || !baseUrl) {
+  const rawBaseUrl = process.env.SNOWFLAKE_PROXY_BASE_URL ?? process.env.SNOWFLAKE_BASE_URL ?? "";
+  if (!apiKey || !rawBaseUrl) {
     throw new Error(
       "[snowflake-cortex] Missing SNOWFLAKE_BASE_URL or SNOWFLAKE_CORTEX_API_KEY",
     );
   }
 
-  const url = `${baseUrl}/api/v2/cortex/inference:embed`;
+  // Always call inference:embed natively — same code path regardless of
+  // whether SNOWFLAKE_PROXY_BASE_URL is set. In proxy mode rawBaseUrl is
+  // already the proxy base (e.g. http://127.0.0.1:18790/api/v2/cortex), so
+  // this resolves to http://proxy/api/v2/cortex/inference:embed. In direct
+  // mode it resolves to https://<acct>.snowflakecomputing.com/api/v2/cortex/inference:embed.
+  const url = `${rawBaseUrl.replace(/\/$/, "")}/api/v2/cortex/inference:embed`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -614,7 +620,7 @@ export default definePluginEntry({
         const claude = isClaudeModel(modelId);
         const api: ModelApi = claude ? "anthropic-messages" : "openai-completions";
         const input: Array<"text" | "image"> = claude ? ["text", "image"] : ["text"];
-        const baseUrl = getBaseURL();
+        const baseUrl = getCatalogBaseURL();
         log("resolveDynamicModel (unknown id, minimal stub)", { modelId, api, input, baseUrl });
         return { id: modelId, name: modelId, api, input, baseUrl };
       },
@@ -699,7 +705,7 @@ export default definePluginEntry({
               (modelObj as Record<string, unknown>).input = inferred;
             }
             if (modelObj && typeof modelObj.baseUrl !== "string") {
-              const fallbackBaseUrl = getBaseURL();
+              const fallbackBaseUrl = getCatalogBaseURL();
               log("wrapStreamFn.inner: patching missing baseUrl", {
                 modelId: String(modelObj.id ?? ""),
                 fallbackBaseUrl,

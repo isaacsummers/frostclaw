@@ -100013,7 +100013,8 @@ function isClaudeModel(modelId) {
 
 // src/catalog.ts
 function getCatalogBaseURL() {
-  return process.env.SNOWFLAKE_PROXY_BASE_URL ?? process.env.SNOWFLAKE_BASE_URL ?? "";
+  const raw = process.env.SNOWFLAKE_PROXY_BASE_URL ?? process.env.SNOWFLAKE_BASE_URL ?? "";
+  return raw ? `${raw.replace(/\/$/, "")}/api/v2/cortex` : "";
 }
 var BETA_ALWAYS = [];
 function anthropicBetaHeaders() {
@@ -106979,11 +106980,11 @@ function modelSupportsTools(modelId) {
 var DEFAULT_SNOWFLAKE_EMBED_MODEL = "snowflake-arctic-embed-m-v1.5";
 async function snowflakeEmbed(texts, model) {
   const apiKey = getApiKey();
-  const baseUrl = getBaseURL();
-  if (!apiKey || !baseUrl) {
+  const rawBaseUrl = process.env.SNOWFLAKE_PROXY_BASE_URL ?? process.env.SNOWFLAKE_BASE_URL ?? "";
+  if (!apiKey || !rawBaseUrl) {
     throw new Error("[snowflake-cortex] Missing SNOWFLAKE_BASE_URL or SNOWFLAKE_CORTEX_API_KEY");
   }
-  const url2 = `${baseUrl}/api/v2/cortex/inference:embed`;
+  const url2 = `${rawBaseUrl.replace(/\/$/, "")}/api/v2/cortex/inference:embed`;
   const res = await fetch(url2, {
     method: "POST",
     headers: {
@@ -107216,7 +107217,7 @@ var frostclaw_default = definePluginEntry({
           const claude = isClaudeModel(modelId);
           const api3 = claude ? "anthropic-messages" : "openai-completions";
           const input = claude ? ["text", "image"] : ["text"];
-          const baseUrl = getBaseURL();
+          const baseUrl = getCatalogBaseURL();
           log2("resolveDynamicModel (unknown id, minimal stub)", { modelId, api: api3, input, baseUrl });
           return { id: modelId, name: modelId, api: api3, input, baseUrl };
         },
@@ -107279,7 +107280,7 @@ var frostclaw_default = definePluginEntry({
                 modelObj.input = inferred;
               }
               if (modelObj && typeof modelObj.baseUrl !== "string") {
-                const fallbackBaseUrl = getBaseURL();
+                const fallbackBaseUrl = getCatalogBaseURL();
                 log2("wrapStreamFn.inner: patching missing baseUrl", {
                   modelId: String(modelObj.id ?? ""),
                   fallbackBaseUrl,
