@@ -1,5 +1,6 @@
 node_modules/
 .logs/
+dist/BUILD_SHA
 
 # Sensitive config — never commit
 openclaw.json
