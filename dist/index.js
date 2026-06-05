@@ -107255,7 +107255,24 @@ var frostclaw_default = definePluginEntry({
           const thinkingLevel = ctx.thinkingLevel;
           return (model, context, options3) => {
             try {
-              let isEmptyStop = function(msg, attempt) {
+              let isRetryableError3 = function(err) {
+                if (!err)
+                  return false;
+                const msg = String(err);
+                if (msg.includes("APIConnectionTimeoutError") || msg.includes("Connection timeout"))
+                  return true;
+                if (/timed?\s?out/i.test(msg))
+                  return true;
+                if (msg.includes("ECONNRESET") || msg.includes("ECONNREFUSED") || msg.includes("ENOTFOUND"))
+                  return true;
+                if (msg.includes("UND_ERR_SOCKET") || msg.includes("UND_ERR_CONNECT_TIMEOUT") || msg.includes("UND_ERR_HEADERS_TIMEOUT") || msg.includes("UND_ERR_BODY_TIMEOUT"))
+                  return true;
+                if (msg.includes("AbortError") || msg.includes("The operation was aborted"))
+                  return true;
+                if (msg.includes("network error") || msg.includes("fetch failed"))
+                  return true;
+                return false;
+              }, isEmptyStop = function(msg, attempt) {
                 if (!msg || typeof msg !== "object")
                   return false;
                 if (msg.stopReason !== "stop")
@@ -107352,6 +107369,7 @@ var frostclaw_default = definePluginEntry({
               };
               const streamResult = inner(model, context, merged);
               const EMPTY_STOP_MAX_RETRIES = 2;
+              const RETRY_BACKOFF_MS = (attempt) => 5000 * (attempt + 1);
               if (streamResult && typeof streamResult.then === "function" && typeof streamResult.result !== "function") {
                 return (async () => {
                   let currentResult = streamResult;
@@ -107369,6 +107387,20 @@ var frostclaw_default = definePluginEntry({
                     try {
                       value = await currentResult;
                     } catch (err) {
+                      if (isRetryableError3(err) && attempt < EMPTY_STOP_MAX_RETRIES) {
+                        logWarn("wrapStreamFn.promise: retryable error from Snowflake, retrying", {
+                          modelId,
+                          attempt,
+                          error: String(err)
+                        });
+                        await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS(attempt)));
+                        const retryResult = inner(model, context, merged);
+                        if (retryResult && typeof retryResult.then === "function") {
+                          currentResult = retryResult;
+                          continue;
+                        }
+                        return retryResult;
+                      }
                       logError("wrapStreamFn.promise REJECTED", {
                         error: String(err),
                         stack: err instanceof Error ? err.stack : undefined
@@ -107473,6 +107505,20 @@ var frostclaw_default = definePluginEntry({
                         }
                       }
                     } catch (err) {
+                      if (!hasContent && isRetryableError3(err) && attempt < EMPTY_STOP_MAX_RETRIES) {
+                        logWarn("wrapStreamFn.stream: retryable error from Snowflake (no content emitted), retrying", {
+                          modelId,
+                          attempt,
+                          error: String(err)
+                        });
+                        buffer.length = 0;
+                        await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS(attempt)));
+                        const retryResult = inner(model, context, merged);
+                        if (retryResult && typeof retryResult[Symbol.asyncIterator] === "function" && typeof retryResult.result === "function") {
+                          currentStream = retryResult;
+                          continue;
+                        }
+                      }
                       logError("wrapStreamFn.stream ERROR", {
                         attempt,
                         error: String(err),

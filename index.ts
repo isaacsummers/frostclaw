@@ -851,6 +851,25 @@ export default definePluginEntry({
             //   1. content array completely empty  → pure Snowflake overload
             //   2. content only thinking blocks    → thinking-only overload signal
             const EMPTY_STOP_MAX_RETRIES = 2;
+            // Backoff between retries (ms): 5s, 10s
+            const RETRY_BACKOFF_MS = (attempt: number) => 5_000 * (attempt + 1);
+
+            // Helper: is an error a retryable network/timeout error from Snowflake?
+            function isRetryableError(err: unknown): boolean {
+              if (!err) return false;
+              const msg = String(err);
+              // Anthropic SDK timeout
+              if (msg.includes("APIConnectionTimeoutError") || msg.includes("Connection timeout")) return true;
+              // Generic timeout strings from SDK / undici
+              if (/timed?\s?out/i.test(msg)) return true;
+              // Node.js fetch / undici network errors
+              if (msg.includes("ECONNRESET") || msg.includes("ECONNREFUSED") || msg.includes("ENOTFOUND")) return true;
+              if (msg.includes("UND_ERR_SOCKET") || msg.includes("UND_ERR_CONNECT_TIMEOUT") || msg.includes("UND_ERR_HEADERS_TIMEOUT") || msg.includes("UND_ERR_BODY_TIMEOUT")) return true;
+              if (msg.includes("AbortError") || msg.includes("The operation was aborted")) return true;
+              // Fetch-level
+              if (msg.includes("network error") || msg.includes("fetch failed")) return true;
+              return false;
+            }
 
             // Helper: is a settled AssistantMessage an empty-stop that warrants retry?
             function isEmptyStop(
@@ -895,6 +914,20 @@ export default definePluginEntry({
                   try {
                     value = await currentResult;
                   } catch (err) {
+                    if (isRetryableError(err) && attempt < EMPTY_STOP_MAX_RETRIES) {
+                      logWarn("wrapStreamFn.promise: retryable error from Snowflake, retrying", {
+                        modelId,
+                        attempt,
+                        error: String(err),
+                      });
+                      await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS(attempt)));
+                      const retryResult = inner(model, context, merged as typeof options);
+                      if (retryResult && typeof (retryResult as { then?: unknown }).then === "function") {
+                        currentResult = retryResult as Promise<unknown>;
+                        continue;
+                      }
+                      return retryResult;
+                    }
                     logError("wrapStreamFn.promise REJECTED", {
                       error: String(err),
                       stack: err instanceof Error ? err.stack : undefined,
@@ -1044,6 +1077,26 @@ export default definePluginEntry({
                       }
                     }
                   } catch (err) {
+                    // If no content has been emitted yet and the error is retryable,
+                    // we can safely retry the whole request.
+                    if (!hasContent && isRetryableError(err) && attempt < EMPTY_STOP_MAX_RETRIES) {
+                      logWarn("wrapStreamFn.stream: retryable error from Snowflake (no content emitted), retrying", {
+                        modelId,
+                        attempt,
+                        error: String(err),
+                      });
+                      buffer.length = 0;
+                      await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS(attempt)));
+                      const retryResult = inner(model, context, merged as typeof options);
+                      if (
+                        retryResult &&
+                        typeof (retryResult as { result?: unknown })[Symbol.asyncIterator as unknown as string] === "function" &&
+                        typeof (retryResult as { result?: unknown }).result === "function"
+                      ) {
+                        currentStream = retryResult as typeof currentStream;
+                        continue;
+                      }
+                    }
                     logError("wrapStreamFn.stream ERROR", {
                       attempt,
                       error: String(err),
