@@ -164,20 +164,28 @@ export function levelEffort(thinkingLevel: string | undefined): string {
  * - `{ type: "enabled", budget_tokens: N }` → overwrite budget with levelBudget(level).
  * - `{ type: "disabled" }` → left untouched.
  *
+ * When `adaptiveOnly` is true (e.g. Claude Opus 4.7/4.8, which reject manual
+ * extended thinking with HTTP 400), an `{ type: "enabled" }` request is
+ * silently redirected to the adaptive path: `thinking` becomes
+ * `{ type: "adaptive" }` and `output_config.effort` is set from thinkingLevel,
+ * with no `budget_tokens`.
+ *
  * Mutates payload in place.
  */
 export function normalizeThinkingBudget(
   payload: Record<string, unknown>,
   thinkingLevel: string | undefined,
+  adaptiveOnly: boolean = false,
 ): void {
   const thinking = payload.thinking;
   if (!thinking || typeof thinking !== "object") return;
   const t = thinking as Record<string, unknown>;
   if (t.type === "disabled") return;
 
-  if (t.type === "adaptive") {
+  if (t.type === "adaptive" || (adaptiveOnly && t.type === "enabled")) {
     const effort = levelEffort(thinkingLevel);
     const existing = payload.output_config as Record<string, unknown> | undefined;
+    payload.thinking = { type: "adaptive" };
     payload.output_config = { ...existing, effort };
     return;
   }

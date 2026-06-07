@@ -31,6 +31,13 @@ export type ModelDefinitionConfig = {
   api?: ModelApi;
   baseUrl?: string;
   reasoning: boolean;
+  /**
+   * When true, the model only accepts `thinking: { type: "adaptive" }` +
+   * `output_config.effort` — manual extended thinking
+   * (`{ type: "enabled", budget_tokens: N }`) returns HTTP 400. Used to
+   * redirect any `enabled` request to the adaptive path.
+   */
+  adaptiveOnly?: boolean;
   input: Array<"text" | "image">;
   cost: CostConfig;
   contextWindow: number;
@@ -71,6 +78,11 @@ export interface CortexModelSpec {
   id: string;
   name: string;
   reasoning: boolean;
+  /**
+   * When true, the model only accepts adaptive thinking; manual extended
+   * thinking (`{ type: "enabled", budget_tokens: N }`) returns HTTP 400.
+   */
+  adaptiveOnly?: boolean;
   contextWindow: number;
   maxTokens: number;
   input: Array<"text" | "image">;
@@ -78,9 +90,9 @@ export interface CortexModelSpec {
 
 export const CLAUDE_MODELS: CortexModelSpec[] = [
   // Claude 4 family
-  { id: "claude-4-opus",                   name: "Claude 4 Opus",                    reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-opus-4-8",                  name: "Claude Opus 4.8",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-opus-4-7",                  name: "Claude Opus 4.7",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-4-opus",                   name: "Claude 4 Opus",                    reasoning: true,  adaptiveOnly: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-opus-4-8",                  name: "Claude Opus 4.8",                  reasoning: true,  adaptiveOnly: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-opus-4-7",                  name: "Claude Opus 4.7",                  reasoning: true,  adaptiveOnly: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-opus-4-6",                  name: "Claude Opus 4.6",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-opus-4-5",                  name: "Claude Opus 4.5",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-4-sonnet",                  name: "Claude 4 Sonnet",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
@@ -182,6 +194,7 @@ export function buildClaudeModelDef(spec: CortexModelSpec, baseURL?: string): Mo
     api: "anthropic-messages",
     baseUrl: url,
     reasoning: spec.reasoning,
+    ...(spec.adaptiveOnly ? { adaptiveOnly: true } : {}),
     input: spec.input,
     cost: claudeCost(spec.id),
     contextWindow: spec.contextWindow,
@@ -290,6 +303,16 @@ export function findCatalogEntry(modelId: string): ModelDefinitionConfig | undef
   const bareId = modelId.replace(/^snowflake-cortex\//, "");
   if (!CATALOG_INDEX) buildModelCatalog();
   return CATALOG_INDEX?.get(bareId);
+}
+
+/**
+ * Returns true when the model only accepts adaptive thinking. Such models
+ * (e.g. Claude Opus 4.7/4.8) reject manual extended thinking
+ * (`{ type: "enabled", budget_tokens: N }`) with HTTP 400. Strips the
+ * frostclaw provider prefix the same way findCatalogEntry does.
+ */
+export function isAdaptiveOnly(modelId: string): boolean {
+  return findCatalogEntry(modelId)?.adaptiveOnly === true;
 }
 
 // Re-export isClaudeModel for convenience (used in index.ts alongside catalog)

@@ -99969,16 +99969,17 @@ function levelEffort(thinkingLevel) {
       return "high";
   }
 }
-function normalizeThinkingBudget(payload, thinkingLevel) {
+function normalizeThinkingBudget(payload, thinkingLevel, adaptiveOnly = false) {
   const thinking = payload.thinking;
   if (!thinking || typeof thinking !== "object")
     return;
   const t = thinking;
   if (t.type === "disabled")
     return;
-  if (t.type === "adaptive") {
+  if (t.type === "adaptive" || adaptiveOnly && t.type === "enabled") {
     const effort = levelEffort(thinkingLevel);
     const existing = payload.output_config;
+    payload.thinking = { type: "adaptive" };
     payload.output_config = { ...existing, effort };
     return;
   }
@@ -100021,9 +100022,9 @@ function anthropicBetaHeaders() {
   return BETA_ALWAYS.length > 0 ? { "anthropic-beta": BETA_ALWAYS.join(",") } : {};
 }
 var CLAUDE_MODELS = [
-  { id: "claude-4-opus", name: "Claude 4 Opus", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
-  { id: "claude-opus-4-8", name: "Claude Opus 4.8", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
-  { id: "claude-opus-4-7", name: "Claude Opus 4.7", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
+  { id: "claude-4-opus", name: "Claude 4 Opus", reasoning: true, adaptiveOnly: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
+  { id: "claude-opus-4-8", name: "Claude Opus 4.8", reasoning: true, adaptiveOnly: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
+  { id: "claude-opus-4-7", name: "Claude Opus 4.7", reasoning: true, adaptiveOnly: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-opus-4-6", name: "Claude Opus 4.6", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-opus-4-5", name: "Claude Opus 4.5", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
   { id: "claude-4-sonnet", name: "Claude 4 Sonnet", reasoning: true, contextWindow: 200000, maxTokens: 128000, input: ["text", "image"] },
@@ -100113,6 +100114,7 @@ function buildClaudeModelDef(spec, baseURL) {
     api: "anthropic-messages",
     baseUrl: url,
     reasoning: spec.reasoning,
+    ...spec.adaptiveOnly ? { adaptiveOnly: true } : {},
     input: spec.input,
     cost: claudeCost(spec.id),
     contextWindow: spec.contextWindow,
@@ -100234,6 +100236,9 @@ function findCatalogEntry(modelId) {
   if (!CATALOG_INDEX)
     buildModelCatalog();
   return CATALOG_INDEX?.get(bareId);
+}
+function isAdaptiveOnly(modelId) {
+  return findCatalogEntry(modelId)?.adaptiveOnly === true;
 }
 
 // node_modules/@mariozechner/pi-ai/node_modules/typebox/build/system/memory/memory.mjs
@@ -107360,7 +107365,7 @@ var frostclaw_default = definePluginEntry({
                       record5.messages = fixEmptyTextBlocks(record5.messages);
                     }
                     stripEagerInputStreaming(record5);
-                    normalizeThinkingBudget(record5, thinkingLevel);
+                    normalizeThinkingBudget(record5, thinkingLevel, isAdaptiveOnly(String(model?.id ?? "")));
                     clampMaxTokens(record5);
                   }
                   const chained = originalOnPayload?.(payload, payloadModel);

@@ -148,6 +148,52 @@ describe("normalizeThinkingBudget", () => {
     normalizeThinkingBudget(payload, "high");
     expect(JSON.stringify(payload)).toBe(before);
   });
+
+  // adaptiveOnly = true (Opus 4.7/4.8): "enabled" is redirected to "adaptive"
+  test('adaptiveOnly: { type: "enabled" } redirected to adaptive + effort "high"', () => {
+    const payload: Record<string, unknown> = {
+      thinking: { type: "enabled", budget_tokens: 1234 },
+    };
+    normalizeThinkingBudget(payload, "high", true);
+    expect((payload.thinking as { type: string }).type).toBe("adaptive");
+    expect((payload.thinking as Record<string, unknown>).budget_tokens).toBeUndefined();
+    expect((payload.output_config as { effort: string }).effort).toBe("high");
+  });
+
+  test('adaptiveOnly: { type: "enabled" } + level "low" → adaptive + effort "low"', () => {
+    const payload: Record<string, unknown> = {
+      thinking: { type: "enabled", budget_tokens: 9999 },
+    };
+    normalizeThinkingBudget(payload, "low", true);
+    expect((payload.thinking as { type: string }).type).toBe("adaptive");
+    expect((payload.output_config as { effort: string }).effort).toBe("low");
+  });
+
+  test('adaptiveOnly: { type: "adaptive" } unaffected — stays adaptive + sets effort', () => {
+    const payload: Record<string, unknown> = { thinking: { type: "adaptive" } };
+    normalizeThinkingBudget(payload, "medium", true);
+    expect((payload.thinking as { type: string }).type).toBe("adaptive");
+    expect((payload.output_config as { effort: string }).effort).toBe("medium");
+  });
+
+  test('adaptiveOnly: { type: "disabled" } unaffected', () => {
+    const payload = { thinking: { type: "disabled" }, other: "val" };
+    const before = JSON.stringify(payload);
+    normalizeThinkingBudget(payload, "high", true);
+    expect(JSON.stringify(payload)).toBe(before);
+  });
+
+  test('adaptiveOnly defaults to false: { type: "enabled" } keeps budget_tokens path', () => {
+    const payload: Record<string, unknown> = {
+      thinking: { type: "enabled", budget_tokens: 1234 },
+    };
+    normalizeThinkingBudget(payload, "medium");
+    expect((payload.thinking as { type: string }).type).toBe("enabled");
+    expect(
+      (payload.thinking as { budget_tokens: number }).budget_tokens,
+    ).toBe(8000);
+    expect(payload.output_config).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

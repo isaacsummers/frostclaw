@@ -32,6 +32,7 @@ import {
   buildModelCatalog,
   findCatalogEntry,
   getCatalogBaseURL,
+  isAdaptiveOnly,
 } from "./src/catalog.js";
 import { applyEagerInputStreamingStrip } from "./src/onpayload.js";
 
@@ -822,7 +823,11 @@ export default definePluginEntry({
                   // also scrub it here so any future SDK regression or alternate
                   // code path can't re-introduce a Cortex-fatal field.
                   stripEagerInputStreaming(record);
-                  normalizeThinkingBudget(record, thinkingLevel);
+                  normalizeThinkingBudget(
+                    record,
+                    thinkingLevel,
+                    isAdaptiveOnly(String((model as { id?: unknown })?.id ?? "")),
+                  );
                   clampMaxTokens(record);
                 }
                 const chained = (originalOnPayload as

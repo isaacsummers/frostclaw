@@ -9,6 +9,8 @@
 import { describe, test, expect } from "bun:test";
 import {
   buildModelCatalog,
+  findCatalogEntry,
+  isAdaptiveOnly,
   CLAUDE_MODELS,
   OPENAI_MODELS,
   OPEN_SOURCE_MODELS,
@@ -64,6 +66,55 @@ describe("catalog compat — supportsEagerToolInputStreaming", () => {
     for (const spec of OPEN_SOURCE_MODELS) {
       expect(allIds.has(spec.id)).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 1b — adaptiveOnly flag (Opus 4.7/4.8 reject manual extended thinking)
+// ---------------------------------------------------------------------------
+
+describe("catalog adaptiveOnly flag", () => {
+  test("claude-opus-4-8 spec has adaptiveOnly: true", () => {
+    const spec = CLAUDE_MODELS.find((m) => m.id === "claude-opus-4-8");
+    expect(spec?.adaptiveOnly).toBe(true);
+  });
+
+  test("claude-opus-4-7 spec has adaptiveOnly: true", () => {
+    const spec = CLAUDE_MODELS.find((m) => m.id === "claude-opus-4-7");
+    expect(spec?.adaptiveOnly).toBe(true);
+  });
+
+  test("claude-sonnet-4-6 spec does NOT set adaptiveOnly", () => {
+    const spec = CLAUDE_MODELS.find((m) => m.id === "claude-sonnet-4-6");
+    expect(spec?.adaptiveOnly).toBeUndefined();
+  });
+
+  test("claude-opus-4-6 spec does NOT set adaptiveOnly (enabled still works)", () => {
+    const spec = CLAUDE_MODELS.find((m) => m.id === "claude-opus-4-6");
+    expect(spec?.adaptiveOnly).toBeUndefined();
+  });
+
+  test("catalog entries propagate adaptiveOnly for Opus 4.7/4.8", () => {
+    expect(findCatalogEntry("claude-opus-4-8")?.adaptiveOnly).toBe(true);
+    expect(findCatalogEntry("claude-opus-4-7")?.adaptiveOnly).toBe(true);
+    expect(findCatalogEntry("claude-sonnet-4-6")?.adaptiveOnly).toBeUndefined();
+  });
+
+  test("isAdaptiveOnly true for Opus 4.7/4.8 and claude-4-opus, false otherwise", () => {
+    expect(isAdaptiveOnly("claude-opus-4-8")).toBe(true);
+    expect(isAdaptiveOnly("claude-opus-4-7")).toBe(true);
+    expect(isAdaptiveOnly("claude-4-opus")).toBe(true);
+    expect(isAdaptiveOnly("claude-sonnet-4-6")).toBe(false);
+    expect(isAdaptiveOnly("claude-opus-4-6")).toBe(false);
+  });
+
+  test("isAdaptiveOnly strips the snowflake-cortex/ prefix", () => {
+    expect(isAdaptiveOnly("snowflake-cortex/claude-opus-4-8")).toBe(true);
+    expect(isAdaptiveOnly("snowflake-cortex/claude-sonnet-4-6")).toBe(false);
+  });
+
+  test("isAdaptiveOnly false for unknown model id", () => {
+    expect(isAdaptiveOnly("does-not-exist")).toBe(false);
   });
 });
 
