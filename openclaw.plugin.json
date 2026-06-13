@@ -24,6 +24,17 @@
             "reasoning": true
           },
           {
+            "id": "claude-opus-4-8",
+            "compat": {
+              "supportedReasoningEfforts": [
+                "off",
+                "adaptive"
+              ],
+              "supportsEagerToolInputStreaming": false
+            },
+            "reasoning": true
+          },
+          {
             "id": "claude-opus-4-7",
             "compat": {
               "supportedReasoningEfforts": [
