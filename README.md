@@ -4,7 +4,7 @@ An [OpenClaw](https://github.com/openclaw/openclaw) provider plugin that routes 
 
 ## Features
 
-- **LLM Provider** — 34 models across Claude, GPT, Llama, Mistral, DeepSeek, and Snowflake
+- **LLM Provider** — 35 models across Claude, GPT, Llama, Mistral, DeepSeek, and Snowflake
 - **Embedding Provider** — Snowflake Arctic Embed models for OpenClaw memory search
 - **Zero cost routing** — uses Snowflake credit-based billing (no per-token API fees)
 
@@ -15,6 +15,7 @@ An [OpenClaw](https://github.com/openclaw/openclaw) provider plugin that routes 
 | Model ID | Context | Notes |
 |----------|---------|-------|
 | `claude-4-opus` | 200k | Reasoning: adaptive |
+| `claude-fable-5` | 1M | Reasoning: adaptive only; private preview; access suspended by Anthropic as of June 12 (temporary) |
 | `claude-opus-4-8` | 1M | Reasoning: adaptive; in catalog, not yet live on Snowflake |
 | `claude-opus-4-7` | 200k | Reasoning: adaptive |
 | `claude-opus-4-6` | 200k | Reasoning: adaptive |
