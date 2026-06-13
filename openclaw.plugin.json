@@ -1,7 +1,7 @@
 {
   "id": "snowflake-cortex",
   "name": "Snowflake Cortex",
-  "description": "Snowflake Cortex AI provider — routes Claude models to the Anthropic Messages API and all others to Chat Completions. PAT auth.",
+  "description": "Snowflake Cortex AI provider \u2014 routes Claude models to the Anthropic Messages API and all others to Chat Completions. PAT auth.",
   "providers": [
     "snowflake-cortex"
   ],
@@ -12,6 +12,17 @@
     "providers": {
       "snowflake-cortex": {
         "models": [
+          {
+            "id": "claude-fable-5",
+            "compat": {
+              "supportedReasoningEfforts": [
+                "off",
+                "adaptive"
+              ],
+              "supportsEagerToolInputStreaming": false
+            },
+            "reasoning": true
+          },
           {
             "id": "claude-4-opus",
             "compat": {
