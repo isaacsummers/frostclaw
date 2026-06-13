@@ -100062,10 +100062,10 @@ var OPEN_SOURCE_MODELS = [
   { id: "snowflake-llama-3.3-70b", name: "Snowflake Llama 3.3 70B", reasoning: false, contextWindow: 128000, maxTokens: 32768, input: ["text"] }
 ];
 var COST_CLAUDE_4_OPUS = { input: 0.000015, output: 0.000075, cacheRead: 0.0000015, cacheWrite: 0.00001875 };
-var COST_OPUS = { input: 0.0000055, output: 0.0000275, cacheRead: 0.00000055, cacheWrite: 0.000006875 };
-var COST_SONNET = { input: 0.0000033, output: 0.0000165, cacheRead: 0.00000033, cacheWrite: 0.000004125 };
-var COST_SONNET_LONG = { input: 0.0000066, output: 0.00002475, cacheRead: 0.00000066, cacheWrite: 0.00000825 };
-var COST_HAIKU = { input: 0.0000011, output: 0.0000055, cacheRead: 0.00000011, cacheWrite: 0.000001375 };
+var COST_OPUS = { input: 0.000005, output: 0.000025, cacheRead: 0.0000005, cacheWrite: 0.00000625 };
+var COST_SONNET = { input: 0.000003, output: 0.000015, cacheRead: 0.0000003, cacheWrite: 0.00000375 };
+var COST_SONNET_LONG = { input: 0.000006, output: 0.00003, cacheRead: 0.0000006, cacheWrite: 0.0000075 };
+var COST_HAIKU = { input: 0.000001, output: 0.000005, cacheRead: 0.0000001, cacheWrite: 0.00000125 };
 var COST_CLAUDE_37 = { input: 0.000003, output: 0.000015, cacheRead: 0.0000003, cacheWrite: 0.00000375 };
 var COST_CLAUDE_4S = { input: 0.000003, output: 0.000015, cacheRead: 0.0000003, cacheWrite: 0.00000375 };
 var COST_GPT55 = { input: 0.0000055, output: 0.000033, cacheRead: 0.00000055, cacheWrite: 0 };
@@ -107163,6 +107163,7 @@ var frostclaw_default = definePluginEntry({
           })
         ],
         catalog: {
+          runtimeAugment: true,
           run: async (ctx) => {
             try {
               const resolved = ctx.resolveProviderApiKey("snowflake-cortex");
@@ -107583,6 +107584,16 @@ var frostclaw_default = definePluginEntry({
               throw err;
             }
           };
+        },
+        normalizeResolvedModel: (_ctx) => {
+          const timeoutSeconds = api2.config?.timeoutSeconds ?? 600;
+          return {
+            ..._ctx.model,
+            requestTimeoutMs: timeoutSeconds * 1000
+          };
+        },
+        applyConfigDefaults: (_ctx) => {
+          return null;
         },
         resolveThinkingProfile(ctx) {
           if (!ctx.modelId)
