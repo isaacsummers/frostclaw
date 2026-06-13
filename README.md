@@ -4,7 +4,7 @@ An [OpenClaw](https://github.com/openclaw/openclaw) provider plugin that routes 
 
 ## Features
 
-- **LLM Provider** — 33 models across Claude, GPT, Llama, Mistral, DeepSeek, and Snowflake
+- **LLM Provider** — 34 models across Claude, GPT, Llama, Mistral, DeepSeek, and Snowflake
 - **Embedding Provider** — Snowflake Arctic Embed models for OpenClaw memory search
 - **Zero cost routing** — uses Snowflake credit-based billing (no per-token API fees)
 
@@ -12,18 +12,19 @@ An [OpenClaw](https://github.com/openclaw/openclaw) provider plugin that routes 
 
 ### Claude (Anthropic Messages API)
 
-| Model ID | Notes |
-|----------|-------|
-| `claude-4-opus` | Reasoning: adaptive |
-| `claude-opus-4-7` | Reasoning: adaptive |
-| `claude-opus-4-6` | Reasoning: adaptive |
-| `claude-opus-4-5` | Reasoning: adaptive |
-| `claude-4-sonnet` | Full reasoning levels |
-| `claude-sonnet-4-6` | Full reasoning levels |
-| `claude-sonnet-4-5` | Full reasoning levels |
-| `claude-sonnet-4-5-long-context` | Full reasoning levels |
-| `claude-haiku-4-5` | No reasoning |
-| `claude-3-7-sonnet` | Full reasoning levels |
+| Model ID | Context | Notes |
+|----------|---------|-------|
+| `claude-4-opus` | 200k | Reasoning: adaptive |
+| `claude-opus-4-8` | 1M | Reasoning: adaptive; in catalog, not yet live on Snowflake |
+| `claude-opus-4-7` | 200k | Reasoning: adaptive |
+| `claude-opus-4-6` | 200k | Reasoning: adaptive |
+| `claude-opus-4-5` | 200k | Reasoning: adaptive |
+| `claude-4-sonnet` | 200k | Full reasoning levels |
+| `claude-sonnet-4-6` | 1M | Full reasoning levels; natively 1M, no separate long-context variant |
+| `claude-sonnet-4-5` | 200k | Full reasoning levels |
+| `claude-sonnet-4-5-long-context` | 200k | Distinct Cortex model ID (not an Anthropic alias); higher price tier |
+| `claude-haiku-4-5` | 200k | No reasoning |
+| `claude-3-7-sonnet` | 200k | Full reasoning levels |
 
 ### OpenAI (Chat Completions API)
 
