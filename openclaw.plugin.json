@@ -1,7 +1,7 @@
 {
   "id": "snowflake-cortex",
   "name": "Snowflake Cortex",
-  "description": "Snowflake Cortex AI provider \u2014 routes Claude models to the Anthropic Messages API and all others to Chat Completions. PAT auth.",
+  "description": "Snowflake Cortex AI provider — routes Claude models to the Anthropic Messages API and all others to Chat Completions. PAT auth.",
   "providers": [
     "snowflake-cortex"
   ],
@@ -20,7 +20,8 @@
                 "adaptive"
               ],
               "supportsEagerToolInputStreaming": false
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "claude-opus-4-7",
@@ -30,7 +31,8 @@
                 "adaptive"
               ],
               "supportsEagerToolInputStreaming": false
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "claude-opus-4-6",
@@ -40,7 +42,8 @@
                 "adaptive"
               ],
               "supportsEagerToolInputStreaming": false
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "claude-opus-4-5",
@@ -50,7 +53,8 @@
                 "adaptive"
               ],
               "supportsEagerToolInputStreaming": false
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "claude-4-sonnet",
@@ -64,7 +68,8 @@
                 "adaptive"
               ],
               "supportsEagerToolInputStreaming": false
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "claude-sonnet-4-6",
@@ -78,7 +83,8 @@
                 "adaptive"
               ],
               "supportsEagerToolInputStreaming": false
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "claude-sonnet-4-5",
@@ -92,7 +98,8 @@
                 "adaptive"
               ],
               "supportsEagerToolInputStreaming": false
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "claude-sonnet-4-5-long-context",
@@ -106,7 +113,8 @@
                 "adaptive"
               ],
               "supportsEagerToolInputStreaming": false
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "claude-haiku-4-5",
@@ -115,7 +123,8 @@
                 "off"
               ],
               "supportsEagerToolInputStreaming": false
-            }
+            },
+            "reasoning": false
           },
           {
             "id": "claude-3-7-sonnet",
@@ -129,7 +138,8 @@
                 "adaptive"
               ],
               "supportsEagerToolInputStreaming": false
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "openai-gpt-5.5",
@@ -138,7 +148,8 @@
                 "off",
                 "adaptive"
               ]
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "openai-gpt-5.5-long-context",
@@ -147,7 +158,8 @@
                 "off",
                 "adaptive"
               ]
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "openai-gpt-5.4",
@@ -156,7 +168,8 @@
                 "off",
                 "adaptive"
               ]
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "openai-gpt-5.4-long-context",
@@ -165,7 +178,8 @@
                 "off",
                 "adaptive"
               ]
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "openai-gpt-5.2",
@@ -174,7 +188,8 @@
                 "off",
                 "adaptive"
               ]
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "openai-gpt-5.1",
@@ -183,7 +198,8 @@
                 "off",
                 "adaptive"
               ]
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "openai-gpt-5",
@@ -192,7 +208,8 @@
                 "off",
                 "adaptive"
               ]
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "openai-gpt-5-mini",
@@ -201,7 +218,8 @@
                 "off",
                 "adaptive"
               ]
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "openai-gpt-5-nano",
@@ -209,7 +227,8 @@
               "supportedReasoningEfforts": [
                 "off"
               ]
-            }
+            },
+            "reasoning": false
           },
           {
             "id": "openai-gpt-4.1",
@@ -217,7 +236,8 @@
               "supportedReasoningEfforts": [
                 "off"
               ]
-            }
+            },
+            "reasoning": false
           },
           {
             "id": "openai-o4-mini",
@@ -226,7 +246,8 @@
                 "off",
                 "adaptive"
               ]
-            }
+            },
+            "reasoning": true
           },
           {
             "id": "deepseek-r1",
@@ -234,7 +255,8 @@
               "supportedReasoningEfforts": [
                 "off"
               ]
-            }
+            },
+            "reasoning": false
           },
           {
             "id": "llama3.1-405b",
@@ -242,7 +264,8 @@
               "supportedReasoningEfforts": [
                 "off"
               ]
-            }
+            },
+            "reasoning": false
           },
           {
             "id": "llama3.1-70b",
@@ -250,7 +273,8 @@
               "supportedReasoningEfforts": [
                 "off"
               ]
-            }
+            },
+            "reasoning": false
           },
           {
             "id": "llama3.1-8b",
@@ -258,7 +282,8 @@
               "supportedReasoningEfforts": [
                 "off"
               ]
-            }
+            },
+            "reasoning": false
           },
           {
             "id": "llama3.2-1b",
@@ -266,7 +291,8 @@
               "supportedReasoningEfforts": [
                 "off"
               ]
-            }
+            },
+            "reasoning": false
           },
           {
             "id": "llama3.2-3b",
@@ -274,7 +300,8 @@
               "supportedReasoningEfforts": [
                 "off"
               ]
-            }
+            },
+            "reasoning": false
           },
           {
             "id": "llama3.3-70b",
@@ -282,7 +309,8 @@
               "supportedReasoningEfforts": [
                 "off"
               ]
-            }
+            },
+            "reasoning": false
           },
           {
             "id": "llama4-maverick",
@@ -290,7 +318,8 @@
               "supportedReasoningEfforts": [
                 "off"
               ]
-            }
+            },
+            "reasoning": false
           },
           {
             "id": "mistral-large",
@@ -298,7 +327,8 @@
               "supportedReasoningEfforts": [
                 "off"
               ]
-            }
+            },
+            "reasoning": false
           },
           {
             "id": "mistral-large2",
@@ -306,7 +336,8 @@
               "supportedReasoningEfforts": [
                 "off"
               ]
-            }
+            },
+            "reasoning": false
           },
           {
             "id": "mistral-7b",
@@ -314,7 +345,8 @@
               "supportedReasoningEfforts": [
                 "off"
               ]
-            }
+            },
+            "reasoning": false
           },
           {
             "id": "snowflake-llama-3.3-70b",
@@ -322,7 +354,8 @@
               "supportedReasoningEfforts": [
                 "off"
               ]
-            }
+            },
+            "reasoning": false
           }
         ]
       }
@@ -370,6 +403,11 @@
   },
   "configSchema": {
     "type": "object",
+    "properties": {
+      "timeoutSeconds": {
+        "type": "number"
+      }
+    },
     "additionalProperties": false
   }
 }
