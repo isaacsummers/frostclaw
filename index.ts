@@ -17,6 +17,8 @@ import {
   type ProviderWrapStreamFnContext,
   type ProviderNormalizeToolSchemasContext,
   type ProviderReplayPolicyContext,
+  type ProviderNormalizeResolvedModelContext,
+  type ProviderApplyConfigDefaultsContext,
 } from "openclaw/plugin-sdk/plugin-entry";
 import { resolveClaudeThinkingProfile } from "openclaw/plugin-sdk/provider-model-shared";
 import type {
@@ -538,6 +540,7 @@ export default definePluginEntry({
       ],
 
       catalog: {
+        runtimeAugment: true,
         run: async (ctx) => {
           try {
             const resolved = ctx.resolveProviderApiKey("snowflake-cortex");
@@ -1181,6 +1184,30 @@ export default definePluginEntry({
             throw err;
           }
         };
+      },
+
+      // -----------------------------------------------------------------------
+      // Hook: Stamp requestTimeoutMs on every resolved model after normalization.
+      // OpenClaw strips requestTimeoutMs during catalog normalization; this hook
+      // runs after OpenClaw assembles the model, before the runner, so the value
+      // survives to the transport layer.
+      // -----------------------------------------------------------------------
+      normalizeResolvedModel: (_ctx: ProviderNormalizeResolvedModelContext) => {
+        const timeoutSeconds = (api.config as any)?.timeoutSeconds ?? 600;
+        return {
+          ..._ctx.model,
+          requestTimeoutMs: timeoutSeconds * 1000,
+        };
+      },
+
+      // -----------------------------------------------------------------------
+      // Hook: Participate in config materialization so timeoutSeconds from
+      // models.providers.snowflake-cortex.timeoutSeconds flows through.
+      // -----------------------------------------------------------------------
+      applyConfigDefaults: (_ctx: ProviderApplyConfigDefaultsContext) => {
+        // Signal that this provider participates in config materialization.
+        // No defaults to set — timeoutSeconds is read in normalizeResolvedModel.
+        return null;
       },
 
       // -----------------------------------------------------------------------

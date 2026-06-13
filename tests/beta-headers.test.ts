@@ -30,7 +30,7 @@
  *      is empty (no blank `anthropic-beta` header attached).
  *   2. `BETA_THINKING` is appended only when both thinking is active AND the
  *      model supports reasoning. Haiku (reasoning:false) never receives it.
- *   3. Haiku 4.5 catalog entry pins maxTokens to 16_384.
+ *   3. Haiku 4.5 catalog entry pins maxTokens to 64_000.
  *   4. The legacy flags removed from this build never reappear in
  *      production source (regression sentinels).
  */
@@ -411,7 +411,7 @@ describe("normalizeToolSchemas", () => {
 
 // ---------------------------------------------------------------------------
 // Direct check on the model catalog: confirm claude-haiku-4-5 has
-// reasoning: false, maxTokens: 16_384 (Anthropic's documented Haiku 4.5
+// reasoning: false, maxTokens: 64_000 (Anthropic's documented Haiku 4.5
 // output cap), and is in the CLAUDE_MODELS list.
 // ---------------------------------------------------------------------------
 
@@ -430,15 +430,15 @@ describe("model catalog \u2014 claude-haiku-4-5 routing", () => {
     expect(m![1]).toBe("false");
   });
 
-  test("claude-haiku-4-5 maxTokens is 16_384 (Anthropic's documented Haiku 4.5 output cap)", () => {
-    // Tolerate the underscore-separated literal (16_384) or the bare number
-    // (16384). Reject the legacy 8_192 / 8192 value.
+  test("claude-haiku-4-5 maxTokens is 64_000 (Anthropic's documented Haiku 4.5 output cap)", () => {
+    // Tolerate the underscore-separated literal (64_000) or the bare number
+    // (64000). Updated from legacy 16_384 to match Anthropic pricing page (2026-06-13).
     const m = indexSrc.match(
       /id:\s*"claude-haiku-4-5"[^}]*maxTokens:\s*([\d_]+)/,
     );
     expect(m).not.toBeNull();
     const literal = m![1].replace(/_/g, "");
-    expect(literal).toBe("16384");
+    expect(literal).toBe("64000");
   });
 
   test("buildClaudeModelDef sets api: 'anthropic-messages' for all Claude models", () => {

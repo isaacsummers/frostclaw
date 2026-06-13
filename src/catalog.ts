@@ -92,15 +92,15 @@ export interface CortexModelSpec {
 export const CLAUDE_MODELS: CortexModelSpec[] = [
   // Claude 4 family
   { id: "claude-4-opus",                   name: "Claude 4 Opus",                    reasoning: true,  adaptiveOnly: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-opus-4-8",                  name: "Claude Opus 4.8",                  reasoning: true,  adaptiveOnly: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-opus-4-8",                  name: "Claude Opus 4.8",                  reasoning: true,  adaptiveOnly: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-opus-4-7",                  name: "Claude Opus 4.7",                  reasoning: true,  adaptiveOnly: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-opus-4-6",                  name: "Claude Opus 4.6",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-opus-4-5",                  name: "Claude Opus 4.5",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-4-sonnet",                  name: "Claude 4 Sonnet",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-6",                name: "Claude Sonnet 4.6",                reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-5",                name: "Claude Sonnet 4.5",                reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-sonnet-4-5-long-context",   name: "Claude Sonnet 4.5 (Long Context)", reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-haiku-4-5",                 name: "Claude Haiku 4.5",                 reasoning: false, contextWindow: 200_000, maxTokens: 16_384,  input: ["text", "image"] },
+  { id: "claude-sonnet-4-6",                name: "Claude Sonnet 4.6",                reasoning: true,  contextWindow: 1_000_000, maxTokens: 64_000,  input: ["text", "image"] },
+  { id: "claude-sonnet-4-5",                name: "Claude Sonnet 4.5",                reasoning: true,  contextWindow: 200_000, maxTokens: 64_000,  input: ["text", "image"] },
+  { id: "claude-sonnet-4-5-long-context",   name: "Claude Sonnet 4.5 (Long Context)", reasoning: true,  contextWindow: 200_000, maxTokens: 64_000,  input: ["text", "image"] },
+  { id: "claude-haiku-4-5",                 name: "Claude Haiku 4.5",                 reasoning: false, contextWindow: 200_000, maxTokens: 64_000,  input: ["text", "image"] },
   // Claude 3 family
   { id: "claude-3-7-sonnet",                name: "Claude 3.7 Sonnet",                reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
 ];
