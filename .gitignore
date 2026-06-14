@@ -7,3 +7,6 @@ openclaw.json
 *.env
 .env.*
 credentials.*
+
+# Local-only reference files
+*.local.md

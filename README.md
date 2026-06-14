@@ -45,6 +45,8 @@ An [OpenClaw](https://github.com/openclaw/openclaw) provider plugin that routes 
 
 ### Open-Source (Chat Completions API)
 
+No prompt caching. Tools stripped automatically.
+
 | Model ID | Context |
 |----------|---------|
 | `deepseek-r1` | 64k |
