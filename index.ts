@@ -1030,7 +1030,7 @@ export default definePluginEntry({
                         if (evType === "message_start") {
                           const usage = evObj.usage as Record<string, unknown> | undefined;
                           _pluginLogger?.info(
-                            `[frostclaw:debug] SSE[${sseSeq++}]: ${evType} | input_tokens=${usage?.input_tokens}`
+                            `[frostclaw:debug] SSE[${sseSeq++}]: ${evType} | input_tokens=${usage?.input_tokens} | cache_read_input_tokens=${usage?.cache_read_input_tokens ?? 0} | cache_creation_input_tokens=${usage?.cache_creation_input_tokens ?? 0}`
                           );
                         } else if (evType === "content_block_delta") {
                           const delta = evObj.delta as Record<string, unknown> | undefined;
@@ -1136,7 +1136,7 @@ export default definePluginEntry({
                     const isEmpty = !hasContent && isEmptyStop(msg, attempt);
                     const usage = msg?.usage as Record<string, unknown> | undefined;
                     _pluginLogger?.info(
-                      `[frostclaw:debug] ${ts} ← Snowflake | model=${modelId} | attempt=${attempt + 1} | stop_reason=${msg?.stopReason} | content_blocks=${contentBlocks} | empty_stop=${isEmpty} | input_tokens=${usage?.inputTokens ?? usage?.input_tokens} | output_tokens=${usage?.outputTokens ?? usage?.output_tokens}`
+                      `[frostclaw:debug] ${ts} ← Snowflake | model=${modelId} | attempt=${attempt + 1} | stop_reason=${msg?.stopReason} | content_blocks=${contentBlocks} | empty_stop=${isEmpty} | input_tokens=${usage?.inputTokens ?? usage?.input_tokens} | output_tokens=${usage?.outputTokens ?? usage?.output_tokens} | cache_read_input_tokens=${(usage?.cacheReadInputTokens ?? usage?.cache_read_input_tokens) ?? 0} | cache_creation_input_tokens=${(usage?.cacheCreationInputTokens ?? usage?.cache_creation_input_tokens) ?? 0}`
                     );
                   }
 
