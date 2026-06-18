@@ -16,7 +16,7 @@ An [OpenClaw](https://github.com/openclaw/openclaw) provider plugin that routes 
 |----------|---------|-------|
 | `claude-4-opus` | 200k | Reasoning: adaptive |
 | `claude-fable-5` | 1M | Reasoning: adaptive only; private preview; access suspended by Anthropic as of June 12 (temporary) |
-| `claude-opus-4-8` | 1M | Reasoning: adaptive; in catalog, not yet live on Snowflake |
+| `claude-opus-4-8` | 1M | Reasoning: adaptive |
 | `claude-opus-4-7` | 200k | Reasoning: adaptive |
 | `claude-opus-4-6` | 200k | Reasoning: adaptive |
 | `claude-opus-4-5` | 200k | Reasoning: adaptive |
