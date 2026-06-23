@@ -19,5 +19,8 @@
     "test": "bun test tests/index.test.ts tests/proxy.test.ts tests/beta-headers.test.ts tests/catalog.test.ts",
     "test:live": "bun test tests/live/"
   },
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@mariozechner/pi-ai": "^0.73.1"
+  }
 }
