@@ -417,6 +417,45 @@ export default definePluginEntry({
             return originalFetch(input, init);
           }
 
+          // Fix auth headers for Snowflake Cortex requests that arrive via direct
+          // model calls (e.g. the pdf tool's complete() path bypasses wrapStreamFn
+          // and the Anthropic SDK sends x-api-key instead of Authorization: Bearer,
+          // which Snowflake rejects with 401).
+          // Only applies when x-api-key is present but Authorization is absent,
+          // so normal agent turns — which already have correct headers from
+          // wrapStreamFn — pass through unchanged.
+          if (url.includes("/api/v2/cortex")) {
+            const rawHeaders = init?.headers;
+            const getHeader = (name: string): string | null => {
+              if (!rawHeaders) return null;
+              if (rawHeaders instanceof Headers) return rawHeaders.get(name);
+              const rec = rawHeaders as Record<string, string>;
+              const lower = name.toLowerCase();
+              for (const key of Object.keys(rec)) {
+                if (key.toLowerCase() === lower) return rec[key];
+              }
+              return null;
+            };
+            const xApiKey = getHeader("x-api-key");
+            const authorization = getHeader("Authorization");
+            if (xApiKey && !authorization) {
+              const newHeaders: Record<string, string> = {};
+              if (rawHeaders instanceof Headers) {
+                rawHeaders.forEach((value, key) => {
+                  if (key.toLowerCase() !== "x-api-key") newHeaders[key] = value;
+                });
+              } else {
+                for (const [key, value] of Object.entries(rawHeaders as Record<string, string>)) {
+                  if (key.toLowerCase() !== "x-api-key") newHeaders[key] = value as string;
+                }
+              }
+              newHeaders["Authorization"] = `Bearer ${xApiKey}`;
+              newHeaders["X-Snowflake-Authorization-Token-Type"] = "PROGRAMMATIC_ACCESS_TOKEN";
+              init = { ...init, headers: newHeaders };
+              _pluginLogger?.info("[frostclaw:fetch] patched x-api-key → Bearer auth for Snowflake Cortex direct call");
+            }
+          }
+
           // Ensure the body is reusable across retries.
           // The Anthropic SDK serializes bodies as JSON strings, but guard against
           // the stream case defensively.
@@ -488,18 +527,19 @@ export default definePluginEntry({
               });
             }
 
-            // Empty-200 detected
+            // Empty-200 detected — log raw SSE payload for diagnosis
             reader.cancel();
+            const rawSse = accumulated.replace(/\n/g, "\\n").slice(0, 500);
             if (attempt < FETCH_MAX_RETRIES) {
               _pluginLogger?.warn(
-                `[frostclaw:fetch] empty-200 detected (attempt ${attempt + 1}/${FETCH_MAX_RETRIES + 1}), retrying...`
+                `[frostclaw:fetch] empty-200 detected (attempt ${attempt + 1}/${FETCH_MAX_RETRIES + 1}), retrying... raw=${rawSse}`
               );
               await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
               continue;
             }
 
             _pluginLogger?.warn(
-              `[frostclaw:fetch] empty-200 persists after ${FETCH_MAX_RETRIES} retries, passing through`
+              `[frostclaw:fetch] empty-200 persists after ${FETCH_MAX_RETRIES} retries, passing through raw=${rawSse}`
             );
             const emptyStream = new ReadableStream<Uint8Array>({
               start(controller) {
