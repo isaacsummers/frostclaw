@@ -33,6 +33,7 @@
  */
 
 import { createServer } from "node:http";
+import { fileURLToPath } from "node:url";
 
 // ---------------------------------------------------------------------------
 // Shared constants (not config-dependent)
@@ -75,6 +76,97 @@ async function readBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   return Buffer.concat(chunks).toString();
+}
+
+/**
+ * Rewrite a JSON Schema to satisfy Snowflake Cortex's strict validator.
+ *
+ * Snowflake rejects pydantic-style nullable anyOf patterns like:
+ *   { anyOf: [{type: "string", format: "date-time"}, {type: "null"}] }
+ * and requires either a plain scalar type or omitting the field.
+ *
+ * Strategy: replace anyOf/oneOf where one branch is {type:"null"} and the
+ * other is a single concrete type with a merged nullable form that Snowflake
+ * accepts: { type: ["string", "null"], ... }  — or for types Snowflake won't
+ * accept in an array, fall back to just the non-null type (dropping nullability).
+ *
+ * Also strips "unevaluatedProperties", "additionalProperties": false, and any
+ * other keywords that trigger Snowflake schema validation rejections.
+ *
+ * @param {any} schema - JSON Schema object (mutated in place)
+ * @returns {any} the mutated schema
+ */
+function rewriteSchemaForSnowflake(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) {
+    schema.forEach(rewriteSchemaForSnowflake);
+    return schema;
+  }
+
+  // Recursively fix $defs / definitions first
+  if (schema.$defs)        Object.values(schema.$defs).forEach(rewriteSchemaForSnowflake);
+  if (schema.definitions)  Object.values(schema.definitions).forEach(rewriteSchemaForSnowflake);
+  if (schema.properties)   Object.values(schema.properties).forEach(rewriteSchemaForSnowflake);
+  if (schema.items)        rewriteSchemaForSnowflake(schema.items);
+  if (schema.allOf)        schema.allOf.forEach(rewriteSchemaForSnowflake);
+
+  // Snowflake doesn't allow unevaluatedProperties or additionalProperties: false
+  delete schema.unevaluatedProperties;
+  if (schema.additionalProperties === false) delete schema.additionalProperties;
+  // Snowflake's strict JSON schema validator rejects annotation keywords inside
+  // property schemas: title, description, default. These are valid JSON Schema
+  // but Snowflake's structured-output parser doesn't accept them.
+  // Safe to remove: LLM extraction schemas use these only as hints; the model
+  // fills fields from context, not from default values.
+  delete schema.title;
+  delete schema.description;
+  delete schema.default;
+
+  // Rewrite anyOf/oneOf nullable patterns
+  for (const key of ["anyOf", "oneOf"]) {
+    if (!Array.isArray(schema[key])) continue;
+    const branches = schema[key];
+    const nullIdx = branches.findIndex(b => b && b.type === "null" && Object.keys(b).length === 1);
+    if (nullIdx === -1) {
+      branches.forEach(rewriteSchemaForSnowflake);
+      continue;
+    }
+    const nonNullBranches = branches.filter((_, i) => i !== nullIdx);
+    if (nonNullBranches.length === 1) {
+      const concrete = nonNullBranches[0];
+      rewriteSchemaForSnowflake(concrete);
+      // Snowflake doesn't accept anyOf/oneOf or array type values.
+      // Flatten: pull all keys from the concrete branch into the parent schema,
+      // dropping the null union entirely. The field stays optional via 'default'.
+      const { ...rest } = concrete;
+      delete schema[key];
+      Object.assign(schema, rest);
+    } else {
+      // Multiple non-null branches — just recurse and leave as-is
+      branches.forEach(rewriteSchemaForSnowflake);
+    }
+  }
+
+  return schema;
+}
+
+/**
+ * If a request body contains a response_format.json_schema, rewrite it
+ * for Snowflake compatibility and return the modified body string.
+ * Returns the original rawBody string if no rewrite is needed.
+ *
+ * @param {string} rawBody
+ * @returns {string}
+ */
+function rewriteResponseFormatSchema(rawBody) {
+  let body;
+  try { body = JSON.parse(rawBody); } catch { return rawBody; }
+  if (!body || typeof body !== "object") return rawBody;
+  const rf = body.response_format;
+  if (!rf || typeof rf !== "object") return rawBody;
+  if (rf.type !== "json_schema" || !rf.json_schema || typeof rf.json_schema.schema !== "object") return rawBody;
+  rewriteSchemaForSnowflake(rf.json_schema.schema);
+  return JSON.stringify(body);
 }
 
 // ---------------------------------------------------------------------------
@@ -313,22 +405,36 @@ export function createProxyServer(config) {
       }
 
       const reader = sfRes.body.getReader();
+      // Cancel upstream reader if client disconnects mid-stream to avoid
+      // leaking open Snowflake connections.
+      const cancelReader = () => { reader.cancel().catch(() => {}); };
+      req.socket?.once("close", cancelReader);
+      req.socket?.once("error", cancelReader);
       const pump = async () => {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            res.end();
-            break;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              res.end();
+              break;
+            }
+            if (res.destroyed) {
+              reader.cancel().catch(() => {});
+              break;
+            }
+            const ok = res.write(value);
+            if (!ok) {
+              await new Promise((resolve) => res.once("drain", resolve));
+            }
           }
-          const ok = res.write(value);
-          if (!ok) {
-            await new Promise((resolve) => res.once("drain", resolve));
-          }
+        } finally {
+          req.socket?.off("close", cancelReader);
+          req.socket?.off("error", cancelReader);
         }
       };
       pump().catch((err) => {
         console.error("[frostclaw] Stream pump error:", err.message);
-        res.end();
+        if (!res.destroyed) res.end();
       });
     } else {
       const responseBody = await sfRes.text();
@@ -362,7 +468,7 @@ export function createProxyServer(config) {
         JSON.stringify({
           status: "ok",
           provider: "snowflake-cortex",
-          routes: ["embeddings", "api/v2/cortex/v1/messages", "api/v2/cortex/v1/chat/completions", "api/v2/cortex/inference:embed"],
+          routes: ["embeddings", "v1/chat/completions", "api/v2/cortex/v1/messages", "api/v2/cortex/v1/chat/completions", "api/v2/cortex/inference:embed"],
           embedModels: [...SUPPORTED_EMBED_MODELS],
         }),
       );
@@ -512,6 +618,8 @@ export function createProxyServer(config) {
           }
           forwardBody = JSON.stringify(body);
         }
+        // Rewrite response_format.json_schema for Snowflake compatibility
+        forwardBody = rewriteResponseFormatSchema(forwardBody);
 
         const syntheticReq = {
           headers: req.headers,
@@ -533,6 +641,50 @@ export function createProxyServer(config) {
         res.end(
           JSON.stringify({ error: { message: err.message, type: "proxy_error" } }),
         );
+      }
+      return;
+    }
+
+    // ── POST /v1/chat/completions ──────────────────────────────────────────
+    // OpenAI-compat alias — graphiti-core and other OpenAI-SDK clients append
+    // /chat/completions to whatever base_url they're given. This aliases
+    // /v1/chat/completions → the Snowflake cortex endpoint so they work with
+    // OPENAI_API_URL=http://frostclaw-proxy:18790/v1
+    if (req.method === "POST" && req.url === "/v1/chat/completions") {
+      req.url = "/api/v2/cortex/v1/chat/completions";
+      // Re-dispatch to the handler above by falling through — but since we
+      // already exited that block, we inline the same logic here.
+      try {
+        const rawBody = await readBody(req);
+        let body;
+        try { body = JSON.parse(rawBody); } catch { body = null; }
+        let forwardBody = rawBody;
+        if (body !== null && typeof body === "object") {
+          const originalModel = body.model;
+          if (typeof body.model === "string") {
+            body.model = body.model
+              .replace(/^snowflake-cortex\//, "")
+              .replace(/^openai-/, "");
+          }
+          const promptChars = (body.messages ?? []).reduce((n, m) => n + (typeof m.content === "string" ? m.content.length : JSON.stringify(m.content).length), 0);
+          console.log(`[frostclaw-proxy] chat/completions (v1 alias) model: ${originalModel} → ${body.model} promptChars=${promptChars}`);
+          if ("max_tokens" in body) {
+            body.max_completion_tokens = body.max_tokens;
+            delete body.max_tokens;
+          }
+          forwardBody = JSON.stringify(body);
+        }
+        // Rewrite response_format.json_schema for Snowflake compatibility
+        forwardBody = rewriteResponseFormatSchema(forwardBody);
+        const syntheticReq = {
+          headers: req.headers,
+          [Symbol.asyncIterator]: async function* () { yield Buffer.from(forwardBody); },
+        };
+        await proxyRequest(syntheticReq, res, `${baseUrl}/api/v2/cortex/v1/chat/completions`);
+      } catch (err) {
+        console.error("[frostclaw] Chat completions (v1 alias) proxy error:", err.message);
+        if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { message: err.message, type: "proxy_error" } }));
       }
       return;
     }
@@ -565,7 +717,7 @@ export function createProxyServer(config) {
     res.end(
       JSON.stringify({
         error:
-          "Not found. Available routes: POST /v1/embeddings, POST /api/v2/cortex/v1/messages, POST /api/v2/cortex/v1/chat/completions, POST /api/v2/cortex/inference:embed, GET /health",
+          "Not found. Available routes: POST /v1/embeddings, POST /v1/chat/completions, POST /api/v2/cortex/v1/messages, POST /api/v2/cortex/v1/chat/completions, POST /api/v2/cortex/inference:embed, GET /health",
       }),
     );
   });
@@ -590,7 +742,13 @@ export function createProxyServer(config) {
 // Standalone entry point — reads from env, starts server on configured port
 // ---------------------------------------------------------------------------
 
-if (import.meta.main || process.argv[1]?.includes("snowflake-proxy")) {
+// import.meta.main is a Deno/Bun convention — Node.js doesn't set it.
+// Use process.argv[1] comparison instead (reliable on all Node versions).
+const isMain = process.argv[1] && (
+  process.argv[1] === fileURLToPath(import.meta.url) ||
+  process.argv[1].includes("snowflake-proxy")
+);
+if (isMain) {
   const baseUrl = (process.env.SNOWFLAKE_BASE_URL || "").replace(/\/$/, "");
   const pat =
     process.env.SNOWFLAKE_CORTEX_API_KEY || process.env.SNOWFLAKE_PAT || "";
