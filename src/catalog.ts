@@ -99,24 +99,20 @@ export const CLAUDE_MODELS: CortexModelSpec[] = [
   { id: "claude-opus-4-5",                  name: "Claude Opus 4.5",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-sonnet-4-6",                name: "Claude Sonnet 4.6",                reasoning: true,  contextWindow: 1_000_000, maxTokens: 64_000,  input: ["text", "image"] },
   { id: "claude-sonnet-4-5",                name: "Claude Sonnet 4.5",                reasoning: true,  contextWindow: 200_000, maxTokens: 64_000,  input: ["text", "image"] },
-  { id: "claude-sonnet-4-5-long-context",   name: "Claude Sonnet 4.5 (Long Context)", reasoning: true,  contextWindow: 200_000, maxTokens: 64_000,  input: ["text", "image"] },
   { id: "claude-haiku-4-5",                 name: "Claude Haiku 4.5",                 reasoning: false, contextWindow: 200_000, maxTokens: 64_000,  input: ["text", "image"] },
-  // Claude 3 family
-  { id: "claude-3-7-sonnet",                name: "Claude 3.7 Sonnet",                reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
 ];
 
 export const OPENAI_MODELS: CortexModelSpec[] = [
-  { id: "openai-gpt-5.5",              name: "GPT-5.5",                reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
-  { id: "openai-gpt-5.5-long-context", name: "GPT-5.5 (Long Context)", reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
+  // gpt-5.1/5.2/5.4: reasoning models — require reasoning_effort in request body;
+  //   reject standard max_completion_tokens-only requests with "invalid request".
+  //   frostclaw does not auto-inject reasoning_effort for OpenAI models; caller must set it.
   { id: "openai-gpt-5.4",              name: "GPT-5.4",                reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
-  { id: "openai-gpt-5.4-long-context", name: "GPT-5.4 (Long Context)", reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
   { id: "openai-gpt-5.2",              name: "GPT-5.2",                reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
   { id: "openai-gpt-5.1",              name: "GPT-5.1",                reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
   { id: "openai-gpt-5",               name: "GPT-5",                  reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
   { id: "openai-gpt-5-mini",           name: "GPT-5 Mini",             reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
   { id: "openai-gpt-5-nano",           name: "GPT-5 Nano",             reasoning: false, contextWindow: 128_000,   maxTokens: 16_384, input: ["text", "image"] },
   { id: "openai-gpt-4.1",              name: "GPT-4.1",                reasoning: false, contextWindow: 1_047_576, maxTokens: 32_768, input: ["text", "image"] },
-  { id: "openai-o4-mini",              name: "o4-mini",                reasoning: true,  contextWindow: 128_000,   maxTokens: 32_768, input: ["text", "image"] },
 ];
 
 export const OPEN_SOURCE_MODELS: CortexModelSpec[] = [
@@ -124,8 +120,6 @@ export const OPEN_SOURCE_MODELS: CortexModelSpec[] = [
   { id: "llama3.1-405b",            name: "Llama 3.1 405B",            reasoning: false, contextWindow: 128_000,   maxTokens: 32_768, input: ["text"] },
   { id: "llama3.1-70b",             name: "Llama 3.1 70B",             reasoning: false, contextWindow: 128_000,   maxTokens: 32_768, input: ["text"] },
   { id: "llama3.1-8b",              name: "Llama 3.1 8B",              reasoning: false, contextWindow: 128_000,   maxTokens: 32_768, input: ["text"] },
-  { id: "llama3.2-1b",              name: "Llama 3.2 1B",              reasoning: false, contextWindow: 128_000,   maxTokens: 16_384, input: ["text"] },
-  { id: "llama3.2-3b",              name: "Llama 3.2 3B",              reasoning: false, contextWindow: 128_000,   maxTokens: 16_384, input: ["text"] },
   { id: "llama3.3-70b",             name: "Llama 3.3 70B",             reasoning: false, contextWindow: 128_000,   maxTokens: 32_768, input: ["text"] },
   { id: "llama4-maverick",          name: "Llama 4 Maverick",          reasoning: false, contextWindow: 1_047_576, maxTokens: 32_768, input: ["text"] },
   { id: "mistral-large",            name: "Mistral Large",             reasoning: false, contextWindow: 32_000,    maxTokens: 8_192,  input: ["text"] },
@@ -146,27 +140,21 @@ const COST_OPUS           = { input: 0.000005,   output: 0.000025,   cacheRead: 
 const COST_SONNET         = { input: 0.000003,   output: 0.000015,   cacheRead: 0.0000003,  cacheWrite: 0.000003750 }; // $3/$15 input/output, $0.30/$3.75 cache (Sonnet 4.5–4.6)
 const COST_SONNET_LONG    = { input: 0.000006,   output: 0.000030,   cacheRead: 0.0000006,  cacheWrite: 0.0000075   }; // 2x Sonnet rates for long-context variant
 const COST_HAIKU          = { input: 0.000001,   output: 0.000005,   cacheRead: 0.0000001,  cacheWrite: 0.00000125  }; // $1/$5 input/output, $0.10/$1.25 cache (Haiku 4.5)
-const COST_CLAUDE_37      = { input: 0.000003,   output: 0.000015,   cacheRead: 0.0000003,  cacheWrite: 0.000003750 }; // same as Sonnet tier
+
 
 // OpenAI models (Azure Regional)
-const COST_GPT55          = { input: 0.0000055,  output: 0.000033,   cacheRead: 0.00000055, cacheWrite: 0 };
-const COST_GPT55_LONG     = { input: 0.000011,   output: 0.0000495,  cacheRead: 0.0000011,  cacheWrite: 0 };
 const COST_GPT54          = { input: 0.00000275, output: 0.0000165,  cacheRead: 0.00000028, cacheWrite: 0 };
-const COST_GPT54_LONG     = { input: 0.0000055,  output: 0.00002475, cacheRead: 0.00000055, cacheWrite: 0 };
 const COST_GPT52          = { input: 0.00000193, output: 0.0000154,  cacheRead: 0.00000019, cacheWrite: 0 };
 const COST_GPT51          = { input: 0.00000138, output: 0.000011,   cacheRead: 0.00000014, cacheWrite: 0 };
 const COST_GPT5_MINI      = { input: 0.00000028, output: 0.0000022,  cacheRead: 0.000000028, cacheWrite: 0 };
 const COST_GPT5_NANO      = { input: 0.00000006, output: 0.00000044, cacheRead: 0.000000006, cacheWrite: 0 };
 const COST_GPT41          = { input: 0.0000022,  output: 0.0000088,  cacheRead: 0.00000055, cacheWrite: 0 };
-const COST_O4_MINI        = { input: 0.0000011,  output: 0.0000044,  cacheRead: 0.00000028, cacheWrite: 0 };
 
 // Open-source models
 const COST_DEEPSEEK_R1    = { input: 0.00000135, output: 0.0000054,  cacheRead: 0, cacheWrite: 0 };
 const COST_LLAMA_405B     = { input: 0.0000024,  output: 0.0000024,  cacheRead: 0, cacheWrite: 0 };
 const COST_LLAMA_70B      = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 };
 const COST_LLAMA_8B       = { input: 0.00000022, output: 0.00000022, cacheRead: 0, cacheWrite: 0 };
-const COST_LLAMA_1B       = { input: 0.0000001,  output: 0.0000001,  cacheRead: 0, cacheWrite: 0 };
-const COST_LLAMA_3B       = { input: 0.00000015, output: 0.00000015, cacheRead: 0, cacheWrite: 0 };
 const COST_LLAMA4_MAV     = { input: 0.00000024, output: 0.00000097, cacheRead: 0, cacheWrite: 0 };
 const COST_MISTRAL_LG     = { input: 0.000004,   output: 0.000012,   cacheRead: 0, cacheWrite: 0 };
 const COST_MISTRAL_LG2    = { input: 0.000002,   output: 0.000006,   cacheRead: 0, cacheWrite: 0 };
@@ -180,7 +168,6 @@ function claudeCost(id: string): CostConfig {
   if (id === "claude-fable-5")        return COST_FABLE;
   if (id.startsWith("claude-opus"))   return COST_OPUS;
   if (id.endsWith("-long-context"))   return COST_SONNET_LONG;
-  if (id === "claude-3-7-sonnet")     return COST_CLAUDE_37;
   if (id.startsWith("claude-sonnet")) return COST_SONNET;
   if (id.startsWith("claude-haiku"))  return COST_HAIKU;
   return COST_OPUS;
@@ -206,9 +193,6 @@ export function buildClaudeModelDef(spec: CortexModelSpec, baseURL?: string): Mo
 }
 
 function openaiCost(id: string): CostConfig {
-  if (id === "openai-gpt-5.5-long-context") return COST_GPT55_LONG;
-  if (id === "openai-gpt-5.5")              return COST_GPT55;
-  if (id === "openai-gpt-5.4-long-context") return COST_GPT54_LONG;
   if (id === "openai-gpt-5.4")              return COST_GPT54;
   if (id === "openai-gpt-5.2")              return COST_GPT52;
   if (id === "openai-gpt-5.1")              return COST_GPT51;
@@ -216,7 +200,6 @@ function openaiCost(id: string): CostConfig {
   if (id === "openai-gpt-5-mini")           return COST_GPT5_MINI;
   if (id === "openai-gpt-5-nano")           return COST_GPT5_NANO;
   if (id.startsWith("openai-gpt-4"))        return COST_GPT41;
-  if (id === "openai-o4-mini")              return COST_O4_MINI;
   return COST_GPT51;
 }
 
@@ -246,8 +229,6 @@ function openSourceCost(id: string): CostConfig {
   if (id === "llama3.1-405b")           return COST_LLAMA_405B;
   if (id === "llama3.1-70b")            return COST_LLAMA_70B;
   if (id === "llama3.1-8b")             return COST_LLAMA_8B;
-  if (id === "llama3.2-1b")             return COST_LLAMA_1B;
-  if (id === "llama3.2-3b")             return COST_LLAMA_3B;
   if (id === "llama3.3-70b")            return COST_LLAMA_70B;
   if (id === "llama4-maverick")         return COST_LLAMA4_MAV;
   if (id === "mistral-large")           return COST_MISTRAL_LG;

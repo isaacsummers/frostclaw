@@ -26,25 +26,19 @@ Reasoning column key:
 | `claude-opus-4-5` | 200k | full levels |
 | `claude-sonnet-4-6` | 1M | full levels; natively 1M, no separate long-context variant |
 | `claude-sonnet-4-5` | 200k | full levels |
-| `claude-sonnet-4-5-long-context` | 200k | full levels; distinct Cortex model ID (not an Anthropic alias); higher price tier |
 | `claude-haiku-4-5` | 200k | none |
-| `claude-3-7-sonnet` | 200k | full levels |
 
 ### OpenAI (Chat Completions API)
 
 | Model ID | Context | Reasoning |
-|----------|---------|-----------|
-| `openai-gpt-5.5` | 128k | adaptive |
-| `openai-gpt-5.5-long-context` | 128k | adaptive |
-| `openai-gpt-5.4` | 128k | adaptive |
-| `openai-gpt-5.4-long-context` | 128k | adaptive |
-| `openai-gpt-5.2` | 128k | adaptive |
-| `openai-gpt-5.1` | 128k | adaptive |
+|----------|---------|----------|
+| `openai-gpt-5.4` | 128k | requires `reasoning_effort` |
+| `openai-gpt-5.2` | 128k | requires `reasoning_effort` |
+| `openai-gpt-5.1` | 128k | requires `reasoning_effort` |
 | `openai-gpt-5` | 128k | adaptive |
 | `openai-gpt-5-mini` | 128k | adaptive |
 | `openai-gpt-5-nano` | 128k | off only |
 | `openai-gpt-4.1` | 1M | off only |
-| `openai-o4-mini` | 128k | adaptive |
 
 ### Open-Source (Chat Completions API)
 
@@ -52,18 +46,16 @@ No prompt caching. Tools stripped automatically.
 
 | Model ID | Context |
 |----------|---------|
-| `deepseek-r1` | 64k |
 | `llama3.1-405b` | 128k |
 | `llama3.1-70b` | 128k |
 | `llama3.1-8b` | 128k |
-| `llama3.2-1b` | 128k |
-| `llama3.2-3b` | 128k |
-| `llama3.3-70b` | 128k |
 | `llama4-maverick` | 1M |
 | `mistral-large` | 32k |
 | `mistral-large2` | 128k |
 | `mistral-7b` | 32k |
 | `snowflake-llama-3.3-70b` | 128k |
+| `llama3.3-70b` | 128k | region-locked; needs cross-region enabled on your Snowflake account |
+| `deepseek-r1` | 64k |
 
 Tool calling is supported for Claude and OpenAI models. Open-source models have tools stripped automatically.
 
@@ -75,10 +67,6 @@ Tool calling is supported for Claude and OpenAI models. Open-source models have 
 | `snowflake-arctic-embed-m` | 768 | |
 | `snowflake-arctic-embed-l-v2.0` | 1024 | Higher quality, larger |
 | `e5-base-v2` | 768 | |
-| `multilingual-e5-large` | – | |
-| `nv-embed-qa-4` | – | |
-| `voyage-multimodal-3` | – | |
-| `voyage-multilingual-2` | – | |
 
 See [Snowflake embed API docs](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-rest-api/embed-api) for model availability by region.
 
