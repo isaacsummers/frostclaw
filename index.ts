@@ -277,7 +277,7 @@ import {
   stripEagerInputStreaming,
   isClaudeModel,
 } from "./src/transforms.js";
-import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
+import { createAssistantMessageEventStream } from "./src/event-stream.js";
 
 /**
  * Returns true for models that support tool calling on the OpenAI Chat
