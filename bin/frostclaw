@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-FROSTCLAW_DIR="$HOME/.openclaw/workspace-rayla/projects/frostclaw"
+FROSTCLAW_DIR="$HOME/projects/frostclaw"
 
 # ---------------------------------------------------------------------------
 # Colour helpers (only when stdout is a terminal)
