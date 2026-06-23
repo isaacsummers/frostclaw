@@ -19,13 +19,11 @@ Reasoning column key:
 
 | Model ID | Context | Reasoning |
 |----------|---------|----|
-| `claude-4-opus` | 200k | adaptive only |
 | `claude-fable-5` | 1M | adaptive only; private preview; access suspended by Anthropic as of June 12 (temporary) |
 | `claude-opus-4-8` | 1M | adaptive only |
 | `claude-opus-4-7` | 200k | adaptive only |
 | `claude-opus-4-6` | 200k | full levels |
 | `claude-opus-4-5` | 200k | full levels |
-| `claude-4-sonnet` | 200k | full levels |
 | `claude-sonnet-4-6` | 1M | full levels; natively 1M, no separate long-context variant |
 | `claude-sonnet-4-5` | 200k | full levels |
 | `claude-sonnet-4-5-long-context` | 200k | full levels; distinct Cortex model ID (not an Anthropic alias); higher price tier |

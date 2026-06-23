@@ -91,14 +91,12 @@ export interface CortexModelSpec {
 
 export const CLAUDE_MODELS: CortexModelSpec[] = [
   // Claude 4 family
-  { id: "claude-4-opus",                   name: "Claude 4 Opus",                    reasoning: true,  adaptiveOnly: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
   // claude-fable-5: adaptive thinking always on — cannot be disabled
   { id: "claude-fable-5",                    name: "Claude Fable 5",                    reasoning: true,  adaptiveOnly: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-opus-4-8",                  name: "Claude Opus 4.8",                  reasoning: true,  adaptiveOnly: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-opus-4-7",                  name: "Claude Opus 4.7",                  reasoning: true,  adaptiveOnly: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-opus-4-6",                  name: "Claude Opus 4.6",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-opus-4-5",                  name: "Claude Opus 4.5",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
-  { id: "claude-4-sonnet",                  name: "Claude 4 Sonnet",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-sonnet-4-6",                name: "Claude Sonnet 4.6",                reasoning: true,  contextWindow: 1_000_000, maxTokens: 64_000,  input: ["text", "image"] },
   { id: "claude-sonnet-4-5",                name: "Claude Sonnet 4.5",                reasoning: true,  contextWindow: 200_000, maxTokens: 64_000,  input: ["text", "image"] },
   { id: "claude-sonnet-4-5-long-context",   name: "Claude Sonnet 4.5 (Long Context)", reasoning: true,  contextWindow: 200_000, maxTokens: 64_000,  input: ["text", "image"] },
@@ -144,13 +142,11 @@ export const OPEN_SOURCE_MODELS: CortexModelSpec[] = [
 // Pricing source: https://www.anthropic.com/pricing (verified 2026-06-13)
 // Per-token rates = per-MTok price / 1_000_000
 const COST_FABLE          = { input: 0.000010,   output: 0.000050,   cacheRead: 0.0000010,  cacheWrite: 0.0000125   }; // $10/$50 input/output (claude-fable-5; adaptive thinking always on)
-const COST_CLAUDE_4_OPUS  = { input: 0.000015,   output: 0.000075,   cacheRead: 0.0000015,  cacheWrite: 0.00001875  }; // $15/$75 input/output, $1.50/$18.75 cache (deprecated model)
 const COST_OPUS           = { input: 0.000005,   output: 0.000025,   cacheRead: 0.0000005,  cacheWrite: 0.00000625  }; // $5/$25 input/output, $0.50/$6.25 cache (Opus 4.5–4.8)
 const COST_SONNET         = { input: 0.000003,   output: 0.000015,   cacheRead: 0.0000003,  cacheWrite: 0.000003750 }; // $3/$15 input/output, $0.30/$3.75 cache (Sonnet 4.5–4.6)
 const COST_SONNET_LONG    = { input: 0.000006,   output: 0.000030,   cacheRead: 0.0000006,  cacheWrite: 0.0000075   }; // 2x Sonnet rates for long-context variant
 const COST_HAIKU          = { input: 0.000001,   output: 0.000005,   cacheRead: 0.0000001,  cacheWrite: 0.00000125  }; // $1/$5 input/output, $0.10/$1.25 cache (Haiku 4.5)
 const COST_CLAUDE_37      = { input: 0.000003,   output: 0.000015,   cacheRead: 0.0000003,  cacheWrite: 0.000003750 }; // same as Sonnet tier
-const COST_CLAUDE_4S      = { input: 0.000003,   output: 0.000015,   cacheRead: 0.0000003,  cacheWrite: 0.000003750 }; // same as Sonnet tier (claude-4-sonnet alias)
 
 // OpenAI models (Azure Regional)
 const COST_GPT55          = { input: 0.0000055,  output: 0.000033,   cacheRead: 0.00000055, cacheWrite: 0 };
@@ -182,10 +178,8 @@ const COST_MISTRAL_7B     = { input: 0.00000015, output: 0.0000002,  cacheRead: 
 
 function claudeCost(id: string): CostConfig {
   if (id === "claude-fable-5")        return COST_FABLE;
-  if (id === "claude-4-opus")         return COST_CLAUDE_4_OPUS;
   if (id.startsWith("claude-opus"))   return COST_OPUS;
   if (id.endsWith("-long-context"))   return COST_SONNET_LONG;
-  if (id === "claude-4-sonnet")       return COST_CLAUDE_4S;
   if (id === "claude-3-7-sonnet")     return COST_CLAUDE_37;
   if (id.startsWith("claude-sonnet")) return COST_SONNET;
   if (id.startsWith("claude-haiku"))  return COST_HAIKU;

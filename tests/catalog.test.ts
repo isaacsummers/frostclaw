@@ -103,7 +103,6 @@ describe("catalog adaptiveOnly flag", () => {
   test("isAdaptiveOnly true for Opus 4.7/4.8 and claude-4-opus, false otherwise", () => {
     expect(isAdaptiveOnly("claude-opus-4-8")).toBe(true);
     expect(isAdaptiveOnly("claude-opus-4-7")).toBe(true);
-    expect(isAdaptiveOnly("claude-4-opus")).toBe(true);
     expect(isAdaptiveOnly("claude-sonnet-4-6")).toBe(false);
     expect(isAdaptiveOnly("claude-opus-4-6")).toBe(false);
   });
@@ -126,13 +125,11 @@ describe("catalog adaptiveOnly flag", () => {
   describe("per-model adaptiveOnly ground truth", () => {
     const cases: Array<{ id: string; adaptiveOnly: boolean; reasoning: boolean }> = [
       // Opus — newer models (4.7+) dropped budget_tokens support on Cortex
-      { id: "claude-4-opus",                 adaptiveOnly: true,  reasoning: true  },
       { id: "claude-opus-4-8",               adaptiveOnly: true,  reasoning: true  },
       { id: "claude-opus-4-7",               adaptiveOnly: true,  reasoning: true  },
       { id: "claude-opus-4-6",               adaptiveOnly: false, reasoning: true  }, // full levels still work
       { id: "claude-opus-4-5",               adaptiveOnly: false, reasoning: true  }, // full levels still work
       // Sonnet — all support full reasoning levels (budget_tokens + adaptive)
-      { id: "claude-4-sonnet",               adaptiveOnly: false, reasoning: true  },
       { id: "claude-sonnet-4-6",             adaptiveOnly: false, reasoning: true  },
       { id: "claude-sonnet-4-5",             adaptiveOnly: false, reasoning: true  },
       { id: "claude-sonnet-4-5-long-context",adaptiveOnly: false, reasoning: true  },
