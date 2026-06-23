@@ -44,6 +44,7 @@ ${BOLD}Usage:${RESET}
 
 ${BOLD}Commands:${RESET}
   build                 Build dist/index.js from source and write dist/BUILD_SHA
+  probe                 Live capability probe — hit every catalog model and show status
   restart               build → restart snowflake-proxy → restart openclaw-gateway
   update                git pull → build → openclaw update → restart both services
   status                Show git, build, proxy, and gateway status
@@ -232,6 +233,8 @@ cmd_build() {
   info "HEAD SHA: $SHA"
   info "Running bun build..."
   bun build ./index.ts --outfile ./dist/index.js --bundle --external 'openclaw'
+  info "Building probe catalog (dist/probe/)..."
+  bun build src/catalog.ts src/transforms.ts --outdir ./dist/probe --format esm --bundle
   echo "$SHA" > ./dist/BUILD_SHA
   ok "Build complete — dist/BUILD_SHA written ($SHA)"
 }
@@ -717,17 +720,61 @@ ZSH_COMPLETION
 # ---------------------------------------------------------------------------
 # help / dispatch
 # ---------------------------------------------------------------------------
-cmd_help() {
-  help_main
+help_probe() {
+  cat <<EOF
+
+${BOLD}frostclaw probe${RESET} — Live capability probe for all catalog models
+
+${BOLD}USAGE${RESET}
+  frostclaw probe [-h] [--json] [--filter <prefix>] [--timeout <ms>]
+
+${BOLD}OPTIONS${RESET}
+  --json            Output results as JSON (exits 1 if any unexpected failure)
+  --filter <pfx>    Only probe models whose ID starts with <pfx>
+  --timeout <ms>    Per-request timeout in ms (default: 12000)
+
+${BOLD}DESCRIPTION${RESET}
+  Probes every model in the frostclaw catalog with a minimal live request
+  against your Snowflake account. Shows live status, reasoning capability,
+  context window, and any notes (e.g. requires reasoning_effort, region-locked).
+
+  Groups output by API:
+    Claude models     → Anthropic Messages API
+    OpenAI/OSS        → Chat Completions API
+    Embedding         → Cortex embed API
+
+  Exits 0 when all models respond (excluding expected-down/region-locked).
+  Exits 1 when any unexpected failure is found.
+
+${BOLD}EXAMPLES${RESET}
+  frostclaw probe                     Probe all models
+  frostclaw probe --filter claude     Only Claude models
+  frostclaw probe --json | jq .       JSON output for scripting
+  frostclaw probe --timeout 5000      Faster timeout (mark slow models as failed)
+EOF
 }
 
 # Dispatch — pass remaining args so each command can see -h/--help
+cmd_help() { help_main; }
+cmd_probe() {
+  has_help_flag "$@" && { help_probe; return 0; }
+  PROBE_SCRIPT="$FROSTCLAW_DIR/scripts/probe-models.mjs"
+  if [ ! -f "$PROBE_SCRIPT" ]; then
+    fail "scripts/probe-models.mjs not found"; exit 1
+  fi
+  if [ ! -f "$FROSTCLAW_DIR/dist/probe/catalog.js" ]; then
+    warn "dist/probe/catalog.js not found — running build first…"
+    cmd_build
+  fi
+  node "$PROBE_SCRIPT" "$@"
+}
 case "${1:-help}" in
   build)       cmd_build       "${@:2}" ;;
   restart)     cmd_restart     "${@:2}" ;;
   update)      cmd_update      "${@:2}" ;;
   status)      cmd_status      "${@:2}" ;;
   verify)      cmd_verify      "${@:2}" ;;
+  probe)       cmd_probe       "${@:2}" ;;
   proxy)       cmd_proxy       "${@:2}" ;;
   gateway)     cmd_gateway     "${@:2}" ;;
   completions) cmd_completions "${@:2}" ;;
