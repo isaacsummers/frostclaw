@@ -1,0 +1,154 @@
+// src/transforms.ts
+function fixTrailingAssistant(messages) {
+  const last = messages[messages.length - 1];
+  if (!last || typeof last !== "object")
+    return messages;
+  if (last.role !== "assistant")
+    return messages;
+  return messages.slice(0, -1);
+}
+function fixEmptyTextBlocks(messages) {
+  let needsFix = false;
+  for (const msg of messages) {
+    if (!msg || typeof msg !== "object")
+      continue;
+    const m = msg;
+    if (!Array.isArray(m.content))
+      continue;
+    if (m.content.length === 0) {
+      needsFix = true;
+      break;
+    }
+    for (const block of m.content) {
+      if (!block || typeof block !== "object")
+        continue;
+      const b = block;
+      if (b.type === "text" && typeof b.text === "string" && b.text.trim() === "") {
+        needsFix = true;
+        break;
+      }
+    }
+    if (needsFix)
+      break;
+  }
+  if (!needsFix)
+    return messages;
+  return messages.map((msg) => {
+    if (!msg || typeof msg !== "object")
+      return msg;
+    const m = msg;
+    if (!Array.isArray(m.content))
+      return msg;
+    if (m.content.length === 0) {
+      return { ...m, content: [{ type: "text", text: "​" }] };
+    }
+    const fixed = m.content.map((block) => {
+      if (!block || typeof block !== "object")
+        return block;
+      const b = block;
+      if (b.type !== "text" || typeof b.text !== "string")
+        return block;
+      if (b.text.trim() === "")
+        return { ...b, text: "​" };
+      return block;
+    });
+    return { ...m, content: fixed };
+  });
+}
+function stripEagerInputStreaming(payload) {
+  const tools = payload.tools;
+  if (!Array.isArray(tools))
+    return;
+  for (const tool of tools) {
+    if (!tool || typeof tool !== "object")
+      continue;
+    const custom = tool.custom;
+    if (!custom || typeof custom !== "object")
+      continue;
+    const customRec = custom;
+    if (!("eager_input_streaming" in customRec))
+      continue;
+    delete customRec.eager_input_streaming;
+    if (Object.keys(customRec).length === 0) {
+      delete tool.custom;
+    }
+  }
+}
+function levelBudget(thinkingLevel) {
+  switch (thinkingLevel) {
+    case "minimal":
+      return 1024;
+    case "low":
+      return 4000;
+    case "medium":
+      return 8000;
+    case "high":
+    default:
+      return 16000;
+  }
+}
+function levelEffort(thinkingLevel) {
+  switch (thinkingLevel) {
+    case "minimal":
+    case "low":
+      return "low";
+    case "medium":
+      return "medium";
+    case "high":
+    case "adaptive":
+    default:
+      return "high";
+  }
+}
+function normalizeThinkingBudget(payload, thinkingLevel, adaptiveOnly = false) {
+  const thinking = payload.thinking;
+  if (!thinking || typeof thinking !== "object")
+    return;
+  const t = thinking;
+  if (t.type === "disabled")
+    return;
+  if (t.type === "adaptive" || adaptiveOnly && t.type === "enabled") {
+    const effort = levelEffort(thinkingLevel);
+    const existing = payload.output_config;
+    payload.thinking = { type: "adaptive" };
+    payload.output_config = { ...existing, effort };
+    return;
+  }
+  if (t.type === "enabled") {
+    payload.thinking = { type: "enabled", budget_tokens: levelBudget(thinkingLevel) };
+  }
+}
+var MAX_TOKENS_FLOOR_NO_THINKING = 1024;
+var MAX_TOKENS_FLOOR_ADAPTIVE = 4096;
+var MAX_TOKENS_OUTPUT_HEADROOM = 1024;
+function clampMaxTokens(payload) {
+  const current = payload.max_tokens;
+  if (typeof current !== "number")
+    return;
+  const thinking = payload.thinking;
+  const thinkingType = thinking && typeof thinking === "object" ? thinking.type : undefined;
+  let floor = MAX_TOKENS_FLOOR_NO_THINKING;
+  if (thinkingType === "enabled") {
+    const budget = thinking?.budget_tokens;
+    const budgetNum = typeof budget === "number" ? budget : 0;
+    floor = budgetNum + MAX_TOKENS_OUTPUT_HEADROOM;
+  } else if (thinkingType === "adaptive") {
+    floor = MAX_TOKENS_FLOOR_ADAPTIVE;
+  }
+  if (current >= floor)
+    return;
+  payload.max_tokens = floor;
+}
+function isClaudeModel(modelId) {
+  return modelId.toLowerCase().startsWith("claude");
+}
+export {
+  stripEagerInputStreaming,
+  normalizeThinkingBudget,
+  levelEffort,
+  levelBudget,
+  isClaudeModel,
+  fixTrailingAssistant,
+  fixEmptyTextBlocks,
+  clampMaxTokens
+};
