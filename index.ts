@@ -22,9 +22,11 @@ import {
 } from "openclaw/plugin-sdk/plugin-entry";
 import { resolveClaudeThinkingProfile } from "openclaw/plugin-sdk/provider-model-shared";
 import type {
-  MemoryEmbeddingProviderAdapter,
-  MemoryEmbeddingProviderCreateOptions,
-} from "openclaw/plugin-sdk/memory-core-host-engine-embeddings";
+  EmbeddingProviderAdapter,
+  EmbeddingProviderCreateOptions,
+  EmbeddingInput,
+  EmbeddingProviderCallOptions,
+} from "openclaw/plugin-sdk/embedding-providers-25O-YtFs";
 import { createProviderApiKeyAuthMethod } from "openclaw/plugin-sdk/provider-auth-api-key";
 import type {
   ModelDefinitionConfig,
@@ -358,14 +360,12 @@ async function snowflakeEmbed(
     );
 }
 
-const snowflakeCortexEmbeddingAdapter: MemoryEmbeddingProviderAdapter = {
+const snowflakeCortexEmbeddingAdapter: EmbeddingProviderAdapter = {
   id: "snowflake-cortex",
   defaultModel: DEFAULT_SNOWFLAKE_EMBED_MODEL,
   transport: "remote",
-  // Low priority — only selected when explicitly configured
-  autoSelectPriority: -1,
 
-  async create(options: MemoryEmbeddingProviderCreateOptions) {
+  async create(options: EmbeddingProviderCreateOptions) {
     const model = options.model || DEFAULT_SNOWFLAKE_EMBED_MODEL;
     const hasKey = !!getApiKey();
     const hasBaseUrl = !!getBaseURL();
@@ -381,8 +381,14 @@ const snowflakeCortexEmbeddingAdapter: MemoryEmbeddingProviderAdapter = {
         id: "snowflake-cortex",
         model,
         maxInputTokens: 4096,
-        embedQuery: (text: string) => snowflakeEmbed([text], model).then((v) => v[0]),
-        embedBatch: (texts: string[]) => snowflakeEmbed(texts, model),
+        embed: (input: EmbeddingInput, _options?: EmbeddingProviderCallOptions) => {
+          const text = typeof input === "string" ? input : input.text;
+          return snowflakeEmbed([text], model).then((v) => v[0]);
+        },
+        embedBatch: (inputs: EmbeddingInput[], _options?: EmbeddingProviderCallOptions) => {
+          const texts = inputs.map((i) => (typeof i === "string" ? i : i.text));
+          return snowflakeEmbed(texts, model);
+        },
       },
     };
   },
@@ -560,7 +566,7 @@ export default definePluginEntry({
         _pluginLogger?.info("[frostclaw:fetch] interceptor already installed, skipping");
       }
 
-      api.registerMemoryEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
+      api.registerEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
       api.registerProvider({
       id: "snowflake-cortex",
       label: "Snowflake Cortex",

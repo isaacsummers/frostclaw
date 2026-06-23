@@ -409,7 +409,7 @@
     }
   ],
   "contracts": {
-    "memoryEmbeddingProviders": [
+    "embeddingProviders": [
       "snowflake-cortex"
     ],
     "embeddingModels": [
