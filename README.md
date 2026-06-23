@@ -12,20 +12,25 @@ An [OpenClaw](https://github.com/openclaw/openclaw) provider plugin that routes 
 
 ### Claude (Anthropic Messages API)
 
-| Model ID | Context | Notes |
-|----------|---------|-------|
-| `claude-4-opus` | 200k | Reasoning: adaptive |
-| `claude-fable-5` | 1M | Reasoning: adaptive only; private preview; access suspended by Anthropic as of June 12 (temporary) |
-| `claude-opus-4-8` | 1M | Reasoning: adaptive |
-| `claude-opus-4-7` | 200k | Reasoning: adaptive |
-| `claude-opus-4-6` | 200k | Reasoning: adaptive |
-| `claude-opus-4-5` | 200k | Reasoning: adaptive |
-| `claude-4-sonnet` | 200k | Full reasoning levels |
-| `claude-sonnet-4-6` | 1M | Full reasoning levels; natively 1M, no separate long-context variant |
-| `claude-sonnet-4-5` | 200k | Full reasoning levels |
-| `claude-sonnet-4-5-long-context` | 200k | Distinct Cortex model ID (not an Anthropic alias); higher price tier |
-| `claude-haiku-4-5` | 200k | No reasoning |
-| `claude-3-7-sonnet` | 200k | Full reasoning levels |
+Reasoning column key:
+- **adaptive only** — supports reasoning via `output_config.effort`; rejects explicit `budget_tokens` with HTTP 400 (frostclaw redirects automatically)
+- **full levels** — supports both explicit `budget_tokens` (minimal/low/medium/high) and adaptive mode
+- **none** — no reasoning/thinking support
+
+| Model ID | Context | Reasoning |
+|----------|---------|----|
+| `claude-4-opus` | 200k | adaptive only |
+| `claude-fable-5` | 1M | adaptive only; private preview; access suspended by Anthropic as of June 12 (temporary) |
+| `claude-opus-4-8` | 1M | adaptive only |
+| `claude-opus-4-7` | 200k | adaptive only |
+| `claude-opus-4-6` | 200k | full levels |
+| `claude-opus-4-5` | 200k | full levels |
+| `claude-4-sonnet` | 200k | full levels |
+| `claude-sonnet-4-6` | 1M | full levels; natively 1M, no separate long-context variant |
+| `claude-sonnet-4-5` | 200k | full levels |
+| `claude-sonnet-4-5-long-context` | 200k | full levels; distinct Cortex model ID (not an Anthropic alias); higher price tier |
+| `claude-haiku-4-5` | 200k | none |
+| `claude-3-7-sonnet` | 200k | full levels |
 
 ### OpenAI (Chat Completions API)
 
@@ -91,9 +96,9 @@ See [Snowflake embed API docs](https://docs.snowflake.com/en/user-guide/snowflak
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `SNOWFLAKE_PAT` | Yes | Snowflake Programmatic Access Token |
+| `SNOWFLAKE_CORTEX_API_KEY` | Yes | Primary auth token (Snowflake PAT or API key) |
 | `SNOWFLAKE_BASE_URL` | Yes | Account URL, e.g. `https://my-account.snowflakecomputing.com` |
-| `SNOWFLAKE_CORTEX_API_KEY` | No | Fallback for `SNOWFLAKE_PAT` |
+| `SNOWFLAKE_PAT` | No | Fallback for `SNOWFLAKE_CORTEX_API_KEY` |
 | `SNOWFLAKE_CORTEX_PROXY_PORT` | No | Unified proxy port (default: `18790`) |
 
 ### CLI

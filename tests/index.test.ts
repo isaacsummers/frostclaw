@@ -112,6 +112,45 @@ describe("normalizeThinkingBudget", () => {
     expect(JSON.stringify(payload)).toBe(before);
   });
 
+  // --- bare adaptive (no thinkingLevel / undefined) ---
+  // Native Anthropic API accepts { type: "adaptive" } with no extra fields and
+  // lets the model self-regulate. Snowflake Cortex requires output_config.effort
+  // alongside it, so frostclaw always injects effort — defaulting to "high" when
+  // no level is specified.
+  test('{ type: "adaptive" } + undefined thinkingLevel defaults effort to "high" (Snowflake requires effort; Anthropic native does not)', () => {
+    const payload: Record<string, unknown> = { thinking: { type: "adaptive" } };
+    normalizeThinkingBudget(payload, undefined);
+    expect((payload.thinking as { type: string }).type).toBe("adaptive");
+    expect((payload.output_config as { effort: string }).effort).toBe("high");
+  });
+
+  test('{ type: "adaptive" } + undefined thinkingLevel does NOT set budget_tokens (adaptive path never uses budget_tokens)', () => {
+    const payload: Record<string, unknown> = { thinking: { type: "adaptive" } };
+    normalizeThinkingBudget(payload, undefined);
+    expect((payload.thinking as Record<string, unknown>).budget_tokens).toBeUndefined();
+  });
+
+  test('{ type: "adaptive" } preserves existing output_config fields when injecting effort', () => {
+    const payload: Record<string, unknown> = {
+      thinking: { type: "adaptive" },
+      output_config: { format: "text", other_field: 42 },
+    };
+    normalizeThinkingBudget(payload, "medium");
+    const oc = payload.output_config as Record<string, unknown>;
+    expect(oc.effort).toBe("medium");
+    expect(oc.format).toBe("text");
+    expect(oc.other_field).toBe(42);
+  });
+
+  // --- enabled with undefined level ---
+  test('{ type: "enabled" } + undefined thinkingLevel defaults budget_tokens to 16000', () => {
+    const payload: Record<string, unknown> = { thinking: { type: "enabled", budget_tokens: 0 } };
+    normalizeThinkingBudget(payload, undefined);
+    expect((payload.thinking as { budget_tokens: number }).budget_tokens).toBe(16000);
+    // enabled path never touches output_config
+    expect(payload.output_config).toBeUndefined();
+  });
+
   test('{ type: "adaptive" } + level "high" sets output_config.effort = "high"', () => {
     const payload: Record<string, unknown> = { thinking: { type: "adaptive" } };
     normalizeThinkingBudget(payload, "high");

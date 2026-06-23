@@ -116,6 +116,45 @@ describe("catalog adaptiveOnly flag", () => {
   test("isAdaptiveOnly false for unknown model id", () => {
     expect(isAdaptiveOnly("does-not-exist")).toBe(false);
   });
+
+  // --- Full coverage: every named Claude model's adaptiveOnly status ---
+  // This table is the source of truth for what frostclaw sends to Snowflake.
+  // adaptiveOnly: true  → Cortex rejects { type: "enabled", budget_tokens: N } with HTTP 400;
+  //                        frostclaw silently redirects to { type: "adaptive" } + output_config.effort.
+  // adaptiveOnly: false → Both enabled (budget_tokens) and adaptive (effort) paths work on Cortex.
+  // reasoning: false    → No thinking support at all; thinking fields must not be sent.
+  describe("per-model adaptiveOnly ground truth", () => {
+    const cases: Array<{ id: string; adaptiveOnly: boolean; reasoning: boolean }> = [
+      // Opus — newer models (4.7+) dropped budget_tokens support on Cortex
+      { id: "claude-4-opus",                 adaptiveOnly: true,  reasoning: true  },
+      { id: "claude-opus-4-8",               adaptiveOnly: true,  reasoning: true  },
+      { id: "claude-opus-4-7",               adaptiveOnly: true,  reasoning: true  },
+      { id: "claude-opus-4-6",               adaptiveOnly: false, reasoning: true  }, // full levels still work
+      { id: "claude-opus-4-5",               adaptiveOnly: false, reasoning: true  }, // full levels still work
+      // Sonnet — all support full reasoning levels (budget_tokens + adaptive)
+      { id: "claude-4-sonnet",               adaptiveOnly: false, reasoning: true  },
+      { id: "claude-sonnet-4-6",             adaptiveOnly: false, reasoning: true  },
+      { id: "claude-sonnet-4-5",             adaptiveOnly: false, reasoning: true  },
+      { id: "claude-sonnet-4-5-long-context",adaptiveOnly: false, reasoning: true  },
+      // Haiku — no reasoning
+      { id: "claude-haiku-4-5",              adaptiveOnly: false, reasoning: false },
+      // Claude 3
+      { id: "claude-3-7-sonnet",             adaptiveOnly: false, reasoning: true  },
+    ];
+
+    for (const { id, adaptiveOnly, reasoning } of cases) {
+      test(`${id}: adaptiveOnly=${adaptiveOnly}, reasoning=${reasoning}`, () => {
+        const spec = CLAUDE_MODELS.find((m) => m.id === id);
+        expect(spec, `model "${id}" not found in CLAUDE_MODELS`).toBeDefined();
+        if (adaptiveOnly) {
+          expect(spec?.adaptiveOnly).toBe(true);
+        } else {
+          expect(spec?.adaptiveOnly).toBeUndefined();
+        }
+        expect(spec?.reasoning).toBe(reasoning);
+      });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
