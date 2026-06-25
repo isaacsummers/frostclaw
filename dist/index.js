@@ -649,7 +649,8 @@ var frostclaw_default = definePluginEntry({
               const isBudget402 = response.status === 402;
               const isRateLimit429 = response.status === 429;
               const isTimeout503 = response.status === 503;
-              const retryable = isThrottled400 || isBudget402 || isRateLimit429 || isTimeout503;
+              const isGoaway = errorBody.includes("GOAWAY") || errorBody.includes("392606");
+              const retryable = isThrottled400 || isBudget402 || isRateLimit429 || isTimeout503 || isGoaway;
               if (retryable && attempt < FETCH_MAX_RETRIES) {
                 _pluginLogger?.warn(`[frostclaw:fetch] retryable HTTP ${response.status} (attempt ${attempt + 1}/${FETCH_MAX_RETRIES + 1}), retrying... body=${errorBody.slice(0, 300)}`);
                 await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
@@ -864,6 +865,10 @@ var frostclaw_default = definePluginEntry({
                 if (msg.includes("AbortError") || msg.includes("The operation was aborted"))
                   return true;
                 if (msg.includes("network error") || msg.includes("fetch failed"))
+                  return true;
+                if (/\bterminated\b/i.test(msg))
+                  return true;
+                if (msg.includes("GOAWAY") || msg.includes("392606"))
                   return true;
                 return false;
               }, isEmptyStop = function(msg, attempt) {
