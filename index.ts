@@ -489,6 +489,39 @@ export default definePluginEntry({
               : init;
             const response = await originalFetch(input, retryInit);
 
+            // --- Non-2xx handling ---
+            // Snowflake status codes that are retryable:
+            //   400 "all requests were throttled by remote service"
+            //   402 budget exceeded
+            //   429 too many requests
+            //   503 inference timed out
+            // All other non-2xx pass through immediately (auth errors, bad schema, etc.)
+            if (!response.ok) {
+              const errorBody = await response.text().catch(() => "");
+              const isThrottled400 = response.status === 400 &&
+                errorBody.toLowerCase().includes("throttled");
+              const isBudget402 = response.status === 402;
+              const isRateLimit429 = response.status === 429;
+              const isTimeout503 = response.status === 503;
+              const retryable = isThrottled400 || isBudget402 || isRateLimit429 || isTimeout503;
+              if (retryable && attempt < FETCH_MAX_RETRIES) {
+                _pluginLogger?.warn(
+                  `[frostclaw:fetch] retryable HTTP ${response.status} (attempt ${attempt + 1}/${FETCH_MAX_RETRIES + 1}), retrying... body=${errorBody.slice(0, 300)}`
+                );
+                await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+                continue;
+              }
+              _pluginLogger?.warn(
+                `[frostclaw:fetch] non-2xx HTTP ${response.status}${retryable ? " (retries exhausted)" : " (non-retryable)"} body=${errorBody.slice(0, 300)}`
+              );
+              // Reconstruct the response so the body is still readable downstream.
+              return new Response(errorBody, {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers,
+              });
+            }
+
             const ct = response.headers.get("content-type") ?? "";
             if (!ct.includes("text/event-stream") || !response.body) {
               return response;
@@ -533,19 +566,19 @@ export default definePluginEntry({
               });
             }
 
-            // Empty-200 detected — log raw SSE payload for diagnosis
+            // Empty-stop detected (HTTP 200 with no content blocks) — log raw SSE for diagnosis
             reader.cancel();
-            const rawSse = accumulated.replace(/\n/g, "\\n").slice(0, 500);
+            const rawSse = accumulated.replace(/\n/g, "\\n").slice(0, 800);
             if (attempt < FETCH_MAX_RETRIES) {
               _pluginLogger?.warn(
-                `[frostclaw:fetch] empty-200 detected (attempt ${attempt + 1}/${FETCH_MAX_RETRIES + 1}), retrying... raw=${rawSse}`
+                `[frostclaw:fetch] empty-stop detected (attempt ${attempt + 1}/${FETCH_MAX_RETRIES + 1}), retrying... raw=${rawSse}`
               );
               await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
               continue;
             }
 
             _pluginLogger?.warn(
-              `[frostclaw:fetch] empty-200 persists after ${FETCH_MAX_RETRIES} retries, passing through raw=${rawSse}`
+              `[frostclaw:fetch] empty-stop persists after ${FETCH_MAX_RETRIES} retries, passing through raw=${rawSse}`
             );
             const emptyStream = new ReadableStream<Uint8Array>({
               start(controller) {
@@ -931,7 +964,11 @@ export default definePluginEntry({
               attempt: number
             ): boolean {
               if (!msg || typeof msg !== "object") return false;
-              if (msg.stopReason !== "stop") return false;
+              // Accept stopReason="stop" OR stopReason=undefined/null:
+              // Snowflake omits message_delta entirely when rate-limiting,
+              // leaving stopReason undefined rather than "stop".
+              const sr = msg.stopReason;
+              if (sr !== "stop" && sr !== undefined && sr !== null) return false;
               if (attempt >= EMPTY_STOP_MAX_RETRIES) return false;
               if (!Array.isArray(msg.content)) return false;
               if (msg.content.length === 0) return true;

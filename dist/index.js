@@ -643,6 +643,25 @@ var frostclaw_default = definePluginEntry({
           for (let attempt = 0;attempt <= FETCH_MAX_RETRIES; attempt++) {
             const retryInit = bodyForRetry !== init?.body ? { ...init, body: bodyForRetry } : init;
             const response = await originalFetch(input, retryInit);
+            if (!response.ok) {
+              const errorBody = await response.text().catch(() => "");
+              const isThrottled400 = response.status === 400 && errorBody.toLowerCase().includes("throttled");
+              const isBudget402 = response.status === 402;
+              const isRateLimit429 = response.status === 429;
+              const isTimeout503 = response.status === 503;
+              const retryable = isThrottled400 || isBudget402 || isRateLimit429 || isTimeout503;
+              if (retryable && attempt < FETCH_MAX_RETRIES) {
+                _pluginLogger?.warn(`[frostclaw:fetch] retryable HTTP ${response.status} (attempt ${attempt + 1}/${FETCH_MAX_RETRIES + 1}), retrying... body=${errorBody.slice(0, 300)}`);
+                await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+                continue;
+              }
+              _pluginLogger?.warn(`[frostclaw:fetch] non-2xx HTTP ${response.status}${retryable ? " (retries exhausted)" : " (non-retryable)"} body=${errorBody.slice(0, 300)}`);
+              return new Response(errorBody, {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers
+              });
+            }
             const ct = response.headers.get("content-type") ?? "";
             if (!ct.includes("text/event-stream") || !response.body) {
               return response;
@@ -689,13 +708,13 @@ var frostclaw_default = definePluginEntry({
               });
             }
             reader.cancel();
-            const rawSse = accumulated.replace(/\n/g, "\\n").slice(0, 500);
+            const rawSse = accumulated.replace(/\n/g, "\\n").slice(0, 800);
             if (attempt < FETCH_MAX_RETRIES) {
-              _pluginLogger?.warn(`[frostclaw:fetch] empty-200 detected (attempt ${attempt + 1}/${FETCH_MAX_RETRIES + 1}), retrying... raw=${rawSse}`);
+              _pluginLogger?.warn(`[frostclaw:fetch] empty-stop detected (attempt ${attempt + 1}/${FETCH_MAX_RETRIES + 1}), retrying... raw=${rawSse}`);
               await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
               continue;
             }
-            _pluginLogger?.warn(`[frostclaw:fetch] empty-200 persists after ${FETCH_MAX_RETRIES} retries, passing through raw=${rawSse}`);
+            _pluginLogger?.warn(`[frostclaw:fetch] empty-stop persists after ${FETCH_MAX_RETRIES} retries, passing through raw=${rawSse}`);
             const emptyStream = new ReadableStream({
               start(controller) {
                 for (const chunk of chunks)
@@ -850,7 +869,8 @@ var frostclaw_default = definePluginEntry({
               }, isEmptyStop = function(msg, attempt) {
                 if (!msg || typeof msg !== "object")
                   return false;
-                if (msg.stopReason !== "stop")
+                const sr = msg.stopReason;
+                if (sr !== "stop" && sr !== undefined && sr !== null)
                   return false;
                 if (attempt >= EMPTY_STOP_MAX_RETRIES)
                   return false;
