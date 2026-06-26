@@ -122,6 +122,120 @@ async function readBody(req) {
 }
 
 /**
+ * Repair tool_use/tool_result pairing in an Anthropic Messages `messages` array
+ * before it reaches Snowflake Cortex. Wire-format port of OpenClaw's
+ * repairToolUseResultPairing (gateway-side `buildReplayPolicy`); since Honcho and
+ * other Anthropic-SDK clients hit this proxy directly without OpenClaw's replay
+ * pipeline, the repair must live here so the proxy is the single pre-Cortex
+ * chokepoint.
+ *
+ * Cortex requires every assistant `tool_use` block to be matched by a
+ * `tool_result` in the immediately-following user turn, in tool_use order, else:
+ *   400 "Each 'toolUse' block must be accompanied with a matching 'toolResult' block."
+ *
+ * Guarantees: results reordered to tool_use order and consolidated into the user
+ * turn right after the assistant; missing results synthesized (is_error
+ * placeholder); orphan results (no matching prior tool_use) dropped; duplicate
+ * results (same id) dropped; non-result content in the span preserved after.
+ *
+ * @param {any} messages - Anthropic Messages array (not mutated; new array on change)
+ * @returns {{messages:any, changed:boolean}}
+ */
+function repairAnthropicToolPairing(messages) {
+  if (!Array.isArray(messages)) return { messages, changed: false };
+
+  const MISSING_TEXT = "[no tool result returned]";
+  const blocksOf = (m) => (m && Array.isArray(m.content) ? m.content : null);
+  const toolUsesOf = (m) => {
+    if (!m || m.role !== "assistant") return [];
+    const b = blocksOf(m);
+    return b ? b.filter((x) => x && x.type === "tool_use" && typeof x.id === "string") : [];
+  };
+  const makeMissing = (id) => ({
+    type: "tool_result",
+    tool_use_id: id,
+    content: MISSING_TEXT,
+    is_error: true,
+  });
+
+  const out = [];
+  let changed = false;
+  const knownToolUseIds = new Set();
+
+  for (let i = 0; i < messages.length; i += 1) {
+    const msg = messages[i];
+    const toolUses = toolUsesOf(msg);
+
+    if (toolUses.length === 0) {
+      // A user turn carrying tool_result blocks with no matching *known*
+      // tool_use is an orphan span -> drop those blocks (keep other content).
+      const b = blocksOf(msg);
+      if (msg && msg.role === "user" && b && b.some((x) => x && x.type === "tool_result")) {
+        const kept = b.filter((x) => !(x && x.type === "tool_result" && !knownToolUseIds.has(x.tool_use_id)));
+        if (kept.length !== b.length) {
+          changed = true;
+          if (kept.length > 0) out.push({ ...msg, content: kept });
+          continue; // drop the now-empty user message
+        }
+      }
+      out.push(msg);
+      continue;
+    }
+
+    const ids = toolUses.map((t) => t.id);
+    ids.forEach((id) => knownToolUseIds.add(id));
+    out.push(msg);
+
+    // Gather tool_result blocks (first-seen wins) + non-result remainder from
+    // the span up to the next assistant turn.
+    const resultsById = new Map();
+    const remainder = [];
+    let j = i + 1;
+    for (; j < messages.length; j += 1) {
+      const next = messages[j];
+      if (next && next.role === "assistant") break;
+      const nb = blocksOf(next);
+      if (next && next.role === "user" && nb) {
+        for (const blk of nb) {
+          if (blk && blk.type === "tool_result" && typeof blk.tool_use_id === "string") {
+            if (!resultsById.has(blk.tool_use_id)) resultsById.set(blk.tool_use_id, blk);
+            else changed = true; // duplicate -> dropped
+          } else {
+            remainder.push(blk);
+          }
+        }
+      } else if (next && next.role === "user" && typeof next.content === "string") {
+        remainder.push({ type: "text", text: next.content });
+      } else if (next) {
+        break;
+      }
+    }
+
+    const idSet = new Set(ids);
+    const resultBlocks = [];
+    for (const id of ids) {
+      const existing = resultsById.get(id);
+      if (existing) resultBlocks.push(existing);
+      else { resultBlocks.push(makeMissing(id)); changed = true; }
+    }
+    for (const [rid] of resultsById) {
+      if (!idSet.has(rid)) changed = true; // result for a different turn -> dropped
+    }
+    const presentInIdOrder = ids.filter((id) => resultsById.has(id));
+    const seenOrder = [...resultsById.keys()].filter((id) => idSet.has(id));
+    if (seenOrder.some((id, k) => id !== presentInIdOrder[k])) changed = true; // reordered
+    if (remainder.length > 0) changed = true;
+
+    out.push({ role: "user", content: resultBlocks });
+    if (remainder.length > 0) out.push({ role: "user", content: remainder });
+
+    i = j - 1; // skip consumed span
+  }
+
+  return { messages: changed ? out : messages, changed };
+}
+
+/**
  * Rewrite a JSON Schema to satisfy Snowflake Cortex's strict validator.
  *
  * Snowflake rejects pydantic-style nullable anyOf patterns like:
@@ -584,27 +698,40 @@ export function createProxyServer(config) {
           body = null;
         }
 
-        // Defensive scrub: drop `eager_input_streaming` from every tool's
-        // `custom` object. Snowflake Cortex's strict validator (Haiku 4.5 and
-        // other tiers) rejects the field with:
-        //   400 tools.0.custom.eager_input_streaming: Extra inputs are not
-        //       permitted
-        // The plugin's onPayload hook already handles this when frostclaw is
-        // in-process, but the standalone proxy may receive requests from any
-        // Anthropic SDK client that still emits the field. Strip it here so
-        // the proxy is safe regardless of caller. If the resulting `custom`
-        // object is empty, drop the key so we never forward `"custom": {}`.
+        // Two pre-Cortex repairs run here so the proxy is the single chokepoint
+        // for everything that must happen before a request reaches Snowflake
+        // Cortex — any Anthropic-SDK client (Honcho's dialectic, etc.) is made
+        // safe regardless of whether it ran OpenClaw's gateway-side replay
+        // pipeline.
+        //
+        // (a) eager_input_streaming scrub: Cortex's strict validator rejects
+        //     tools[].custom.eager_input_streaming with
+        //       400 ...eager_input_streaming: Extra inputs are not permitted
+        //     Drop it; if `custom` becomes empty, drop the key too.
+        // (b) tool_use/tool_result pairing repair: Cortex requires every
+        //     assistant `tool_use` block to be matched by a `tool_result` in the
+        //     immediately-following user turn (400 "Each 'toolUse' block must be
+        //     accompanied with a matching 'toolResult' block"). This is the
+        //     wire-format port of OpenClaw's repairToolUseResultPairing.
         let forwardBody = rawBody;
-        if (body !== null && typeof body === "object" && Array.isArray(body.tools)) {
+        if (body !== null && typeof body === "object") {
           let mutated = false;
-          for (const tool of body.tools) {
-            if (!tool || typeof tool !== "object") continue;
-            const custom = tool.custom;
-            if (!custom || typeof custom !== "object") continue;
-            if (!("eager_input_streaming" in custom)) continue;
-            delete custom.eager_input_streaming;
-            if (Object.keys(custom).length === 0) delete tool.custom;
+          if (Array.isArray(body.tools)) {
+            for (const tool of body.tools) {
+              if (!tool || typeof tool !== "object") continue;
+              const custom = tool.custom;
+              if (!custom || typeof custom !== "object") continue;
+              if (!("eager_input_streaming" in custom)) continue;
+              delete custom.eager_input_streaming;
+              if (Object.keys(custom).length === 0) delete tool.custom;
+              mutated = true;
+            }
+          }
+          const repaired = repairAnthropicToolPairing(body.messages);
+          if (repaired.changed) {
+            body.messages = repaired.messages;
             mutated = true;
+            console.log("[frostclaw-proxy] messages: repaired tool_use/tool_result pairing");
           }
           if (mutated) forwardBody = JSON.stringify(body);
         }
@@ -649,9 +776,16 @@ export function createProxyServer(config) {
         //   - strip "snowflake-cortex/" and "openai-" provider prefixes
         //   - rename max_tokens → max_completion_tokens (Snowflake chat completions
         //     uses the OpenAI v1 key; max_tokens is the Anthropic / legacy name)
-        // Snowflake's /api/v2/cortex/v1/chat/completions handles ALL models
-        // (Claude, OpenAI, Llama, …) natively in OpenAI format — no format
-        // translation to/from Anthropic Messages format is required.
+        //
+        // NOTE on tool calling: Snowflake's chat/completions endpoint accepts
+        // OpenAI-format requests but, for Claude models, converts the tool history
+        // into native Anthropic toolUse/toolResult blocks internally — and that
+        // conversion mis-pairs parallel tool calls (400 "Each 'toolUse' block must
+        // be accompanied with a matching 'toolResult' block"). Tool-using clients
+        // should therefore use the Anthropic /api/v2/cortex/v1/messages surface
+        // instead (Honcho's dialectic does). This surface is left as a plain
+        // passthrough; the only OpenAI-surface callers here use structured output
+        // (graphiti-core, Honcho deriver), which carry no tools.
         let forwardBody = rawBody;
         if (body !== null && typeof body === "object") {
           const originalModel = body.model;

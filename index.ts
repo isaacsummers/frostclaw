@@ -440,9 +440,16 @@ export default definePluginEntry({
           // require (Function constructor) so bun's bundler does not statically
           // analyse or inline the module — which would pull in undici's optional
           // node:sqlite cache-store dep and fail the build.
-          // eslint-disable-next-line no-new-func
-          const _runtimeRequire = new Function("p", "return require(p)") as (p: string) => Record<string, unknown>;
-          const undici = _runtimeRequire("/home/ubuntu/.npm-global/lib/node_modules/openclaw/node_modules/undici");
+          // Build a working require() without an `import` of node:module — bun's
+          // bundler (default target) stubs `import {createRequire} from "node:module"`
+          // to an empty object, and `new Function("p","return require(p)")` throws
+          // "require is not defined" in ESM. process.getBuiltinModule is a runtime
+          // accessor (Node 22+) the bundler cannot stub. The undici path is passed
+          // at runtime so undici is never statically inlined (which would pull in
+          // its optional node:sqlite cache-store dep and fail the build).
+          const _nodeModule = (process as unknown as { getBuiltinModule: (m: string) => { createRequire: (u: string) => (p: string) => Record<string, unknown> } }).getBuiltinModule("module");
+          const _runtimeRequire = _nodeModule.createRequire(import.meta.url);
+          const undici = _runtimeRequire("/home/ubuntu/.npm-global/lib/node_modules/openclaw/node_modules/undici") as Record<string, unknown>;
           _snowflakeDispatcher = new undici.Agent({
             headersTimeout: 30_000,
             bodyTimeout: 0,          // no timeout on response body stream

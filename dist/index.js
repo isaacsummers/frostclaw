@@ -625,7 +625,8 @@ var frostclaw_default = definePluginEntry({
         const originalFetch = globalThis.fetch;
         let _snowflakeDispatcher = undefined;
         try {
-          const _runtimeRequire = new Function("p", "return require(p)");
+          const _nodeModule = process.getBuiltinModule("module");
+          const _runtimeRequire = _nodeModule.createRequire(import.meta.url);
           const undici = _runtimeRequire("/home/ubuntu/.npm-global/lib/node_modules/openclaw/node_modules/undici");
           _snowflakeDispatcher = new undici.Agent({
             headersTimeout: 30000,

@@ -142,6 +142,52 @@ function clampMaxTokens(payload) {
 function isClaudeModel(modelId) {
   return modelId.toLowerCase().startsWith("claude");
 }
+function stripDocumentBlocks(messages) {
+  let needsFix = false;
+  outer:
+    for (const msg of messages) {
+      if (!msg || typeof msg !== "object")
+        continue;
+      const m = msg;
+      if (!Array.isArray(m.content))
+        continue;
+      for (const block of m.content) {
+        if (!block || typeof block !== "object")
+          continue;
+        if (block.type === "document") {
+          needsFix = true;
+          break outer;
+        }
+      }
+    }
+  if (!needsFix)
+    return messages;
+  return messages.map((msg) => {
+    if (!msg || typeof msg !== "object")
+      return msg;
+    const m = msg;
+    if (!Array.isArray(m.content))
+      return msg;
+    const hasDoc = m.content.some((b) => b && typeof b === "object" && b.type === "document");
+    if (!hasDoc)
+      return msg;
+    const fixed = m.content.map((block) => {
+      if (!block || typeof block !== "object")
+        return block;
+      const b = block;
+      if (b.type !== "document")
+        return block;
+      const source = b.source;
+      const mediaType = typeof source?.media_type === "string" ? source.media_type : "unknown";
+      const title = typeof b.title === "string" ? ` ("${b.title}")` : "";
+      return {
+        type: "text",
+        text: `[PDF/document block stripped${title} — Snowflake Cortex does not support native document blocks; media_type=${mediaType}]`
+      };
+    });
+    return { ...m, content: fixed };
+  });
+}
 
 // src/catalog.ts
 function getCatalogBaseURL() {
