@@ -149,6 +149,52 @@ function clampMaxTokens(payload) {
 function isClaudeModel(modelId) {
   return modelId.toLowerCase().startsWith("claude");
 }
+function stripDocumentBlocks(messages) {
+  let needsFix = false;
+  outer:
+    for (const msg of messages) {
+      if (!msg || typeof msg !== "object")
+        continue;
+      const m = msg;
+      if (!Array.isArray(m.content))
+        continue;
+      for (const block of m.content) {
+        if (!block || typeof block !== "object")
+          continue;
+        if (block.type === "document") {
+          needsFix = true;
+          break outer;
+        }
+      }
+    }
+  if (!needsFix)
+    return messages;
+  return messages.map((msg) => {
+    if (!msg || typeof msg !== "object")
+      return msg;
+    const m = msg;
+    if (!Array.isArray(m.content))
+      return msg;
+    const hasDoc = m.content.some((b) => b && typeof b === "object" && b.type === "document");
+    if (!hasDoc)
+      return msg;
+    const fixed = m.content.map((block) => {
+      if (!block || typeof block !== "object")
+        return block;
+      const b = block;
+      if (b.type !== "document")
+        return block;
+      const source = b.source;
+      const mediaType = typeof source?.media_type === "string" ? source.media_type : "unknown";
+      const title = typeof b.title === "string" ? ` ("${b.title}")` : "";
+      return {
+        type: "text",
+        text: `[PDF/document block stripped${title} — Snowflake Cortex does not support native document blocks; media_type=${mediaType}]`
+      };
+    });
+    return { ...m, content: fixed };
+  });
+}
 
 // src/catalog.ts
 function getCatalogBaseURL() {
@@ -573,16 +619,36 @@ var frostclaw_default = definePluginEntry({
     try {
       setPluginLogger(api.logger, api.config);
       log("plugin registered");
-      const FETCH_INTERCEPT_MARKER = Symbol.for("frostclaw.fetchIntercepted");
+      const FETCH_INTERCEPT_MARKER = Symbol.for("frostclaw.fetchIntercepted.v2");
       if (!globalThis[FETCH_INTERCEPT_MARKER]) {
         globalThis[FETCH_INTERCEPT_MARKER] = true;
         const originalFetch = globalThis.fetch;
+        let _snowflakeDispatcher = undefined;
+        try {
+          const _runtimeRequire = new Function("p", "return require(p)");
+          const undici = _runtimeRequire("/home/ubuntu/.npm-global/lib/node_modules/openclaw/node_modules/undici");
+          _snowflakeDispatcher = new undici.Agent({
+            headersTimeout: 30000,
+            bodyTimeout: 0,
+            keepAliveTimeout: 90000,
+            keepAliveMaxTimeout: 300000
+          });
+          _pluginLogger?.info("[frostclaw:fetch] undici Agent dispatcher configured (bodyTimeout=0, keepAlive=90s)");
+        } catch (e) {
+          _pluginLogger?.warn(`[frostclaw:fetch] undici not available, using default dispatcher: ${e}`);
+        }
         globalThis.fetch = async function frostclawFetch(input, init) {
           const url = typeof input === "string" ? input : input.url;
-          if (!url.includes("/v1/messages") || (init?.method ?? "GET").toUpperCase() !== "POST") {
+          const method = (init?.method ?? "GET").toUpperCase();
+          const isSnowflakeInference = method === "POST" && (url.includes("/api/v2/cortex/v1/messages") || url.includes("/api/v2/cortex/v1/chat/completions"));
+          if (!isSnowflakeInference) {
             return originalFetch(input, init);
           }
-          if (url.includes("/api/v2/cortex")) {
+          if (_snowflakeDispatcher) {
+            init = { ...init, dispatcher: _snowflakeDispatcher };
+          }
+          const isAnthropicFormat = url.includes("/api/v2/cortex/v1/messages");
+          {
             const rawHeaders = init?.headers;
             const getHeader = (name) => {
               if (!rawHeaders)
@@ -680,10 +746,17 @@ var frostclaw_default = definePluginEntry({
               if (value) {
                 chunks.push(value);
                 accumulated += decoder.decode(value, { stream: true });
-                if (accumulated.includes("content_block_start"))
-                  hasContentBlock = true;
-                if (accumulated.includes("message_stop"))
-                  hasMessageStop = true;
+                if (isAnthropicFormat) {
+                  if (accumulated.includes("content_block_start"))
+                    hasContentBlock = true;
+                  if (accumulated.includes("message_stop"))
+                    hasMessageStop = true;
+                } else {
+                  if (/"delta"\s*:\s*\{[^}]*"content"\s*:\s*"[^"]+"/.test(accumulated))
+                    hasContentBlock = true;
+                  if (accumulated.includes("[DONE]"))
+                    hasMessageStop = true;
+                }
               }
             }
             if (hasContentBlock || !hasMessageStop) {
@@ -958,6 +1031,7 @@ var frostclaw_default = definePluginEntry({
                     if (Array.isArray(record.messages)) {
                       record.messages = fixTrailingAssistant(record.messages);
                       record.messages = fixEmptyTextBlocks(record.messages);
+                      record.messages = stripDocumentBlocks(record.messages);
                     }
                     stripEagerInputStreaming(record);
                     normalizeThinkingBudget(record, thinkingLevel, isAdaptiveOnly(String(model?.id ?? "")));
@@ -1180,11 +1254,7 @@ var frostclaw_default = definePluginEntry({
           };
         },
         normalizeResolvedModel: (_ctx) => {
-          const timeoutSeconds = api.config?.timeoutSeconds ?? 600;
-          return {
-            ..._ctx.model,
-            requestTimeoutMs: timeoutSeconds * 1000
-          };
+          return { ..._ctx.model };
         },
         applyConfigDefaults: (_ctx) => {
           return null;

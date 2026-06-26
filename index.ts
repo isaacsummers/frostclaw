@@ -275,6 +275,7 @@ import {
   normalizeThinkingBudget,
   clampMaxTokens,
   stripEagerInputStreaming,
+  stripDocumentBlocks,
   isClaudeModel,
 } from "./src/transforms.js";
 import { createAssistantMessageEventStream } from "./src/event-stream.js";
@@ -411,17 +412,67 @@ export default definePluginEntry({
       log("plugin registered");
 
       // Install fetch interceptor to transparently retry Snowflake empty-200
-      // SSE responses (message_start → message_stop with no content_block_start).
-      const FETCH_INTERCEPT_MARKER = Symbol.for("frostclaw.fetchIntercepted");
+      // SSE responses and configure long-lived streaming connections.
+      //
+      // URL matching covers both Snowflake Cortex API paths:
+      //   - /api/v2/cortex/v1/messages        (Anthropic Messages API, direct or via proxy)
+      //   - /api/v2/cortex/v1/chat/completions (OpenAI Chat Completions API)
+      // Both are POST endpoints that return text/event-stream.
+      // Using full path strings rather than two separate includes() guards so
+      // the match is unambiguous regardless of base URL configuration.
+      //
+      // The marker is versioned so a gateway hot-reload installs a fresh
+      // interceptor rather than reusing a stale one from a previous plugin load.
+      const FETCH_INTERCEPT_MARKER = Symbol.for("frostclaw.fetchIntercepted.v2");
       if (!(globalThis as Record<symbol, unknown>)[FETCH_INTERCEPT_MARKER]) {
         (globalThis as Record<symbol, unknown>)[FETCH_INTERCEPT_MARKER] = true;
         const originalFetch = globalThis.fetch;
 
+        // Configure a long-lived dispatcher for Snowflake inference endpoints.
+        // bodyTimeout:0 prevents undici from dropping the connection mid-stream
+        // during extended thinking phases where Snowflake emits no SSE tokens
+        // for many seconds. headersTimeout covers the initial connection setup.
+        // keepAliveTimeout:90s outlasts the 60s undici idle window to avoid
+        // "terminated" errors from keep-alive races on reused connections.
+        let _snowflakeDispatcher: unknown = undefined;
+        try {
+          // undici ships with openclaw's node_modules. Use an opaque runtime
+          // require (Function constructor) so bun's bundler does not statically
+          // analyse or inline the module — which would pull in undici's optional
+          // node:sqlite cache-store dep and fail the build.
+          // eslint-disable-next-line no-new-func
+          const _runtimeRequire = new Function("p", "return require(p)") as (p: string) => Record<string, unknown>;
+          const undici = _runtimeRequire("/home/ubuntu/.npm-global/lib/node_modules/openclaw/node_modules/undici");
+          _snowflakeDispatcher = new undici.Agent({
+            headersTimeout: 30_000,
+            bodyTimeout: 0,          // no timeout on response body stream
+            keepAliveTimeout: 90_000,
+            keepAliveMaxTimeout: 300_000,
+          });
+          _pluginLogger?.info("[frostclaw:fetch] undici Agent dispatcher configured (bodyTimeout=0, keepAlive=90s)");
+        } catch (e) {
+          _pluginLogger?.warn(`[frostclaw:fetch] undici not available, using default dispatcher: ${e}`);
+        }
+
         globalThis.fetch = async function frostclawFetch(input, init) {
           const url = typeof input === "string" ? input : (input as Request).url;
-          if (!url.includes("/v1/messages") || (init?.method ?? "GET").toUpperCase() !== "POST") {
+          const method = (init?.method ?? "GET").toUpperCase();
+          const isSnowflakeInference =
+            method === "POST" &&
+            (url.includes("/api/v2/cortex/v1/messages") ||
+             url.includes("/api/v2/cortex/v1/chat/completions"));
+          if (!isSnowflakeInference) {
             return originalFetch(input, init);
           }
+
+          // Attach the long-lived dispatcher for Snowflake inference calls.
+          if (_snowflakeDispatcher) {
+            init = { ...init, dispatcher: _snowflakeDispatcher } as typeof init;
+          }
+
+          // Detect SSE format: Anthropic emits content_block_start/message_stop;
+          // OpenAI emits data: {choices:[{delta:{content:...}}]} / data: [DONE].
+          const isAnthropicFormat = url.includes("/api/v2/cortex/v1/messages");
 
           // Fix auth headers for Snowflake Cortex requests that arrive via direct
           // model calls (e.g. the pdf tool's complete() path bypasses wrapStreamFn
@@ -430,7 +481,7 @@ export default definePluginEntry({
           // Only applies when x-api-key is present but Authorization is absent,
           // so normal agent turns — which already have correct headers from
           // wrapStreamFn — pass through unchanged.
-          if (url.includes("/api/v2/cortex")) {
+          {
             const rawHeaders = init?.headers;
             const getHeader = (name: string): string | null => {
               if (!rawHeaders) return null;
@@ -544,8 +595,17 @@ export default definePluginEntry({
               if (value) {
                 chunks.push(value);
                 accumulated += decoder.decode(value, { stream: true });
-                if (accumulated.includes("content_block_start")) hasContentBlock = true;
-                if (accumulated.includes("message_stop")) hasMessageStop = true;
+                if (isAnthropicFormat) {
+                  // Anthropic SSE: content_block_start indicates real content;
+                  // message_stop without it is an empty response.
+                  if (accumulated.includes("content_block_start")) hasContentBlock = true;
+                  if (accumulated.includes("message_stop")) hasMessageStop = true;
+                } else {
+                  // OpenAI SSE: any delta with non-empty content is real;
+                  // [DONE] without it is an empty response.
+                  if (/"delta"\s*:\s*\{[^}]*"content"\s*:\s*"[^"]+"/.test(accumulated)) hasContentBlock = true;
+                  if (accumulated.includes("[DONE]")) hasMessageStop = true;
+                }
               }
             }
 
@@ -901,6 +961,11 @@ export default definePluginEntry({
                   if (Array.isArray(record.messages)) {
                     record.messages = fixTrailingAssistant(record.messages);
                     record.messages = fixEmptyTextBlocks(record.messages);
+                    // Strip native PDF/document blocks — Snowflake Cortex rejects
+                    // them with HTTP 401 even though it runs Claude models. The
+                    // Anthropic document block type is not part of Snowflake's
+                    // API surface. Each stripped block becomes a text placeholder.
+                    record.messages = stripDocumentBlocks(record.messages);
                   }
                   // Defensive: strip `eager_input_streaming` from tool schemas.
                   // The catalog sets supportsEagerToolInputStreaming: false to
@@ -1279,26 +1344,25 @@ export default definePluginEntry({
       },
 
       // -----------------------------------------------------------------------
-      // Hook: Stamp requestTimeoutMs on every resolved model after normalization.
-      // OpenClaw strips requestTimeoutMs during catalog normalization; this hook
-      // runs after OpenClaw assembles the model, before the runner, so the value
-      // survives to the transport layer.
+      // Hook: Normalize the resolved model before the runner sees it.
+      // We intentionally do NOT set requestTimeoutMs here. Setting it causes
+      // openclaw's resolveLlmIdleTimeoutMs to fire the modelRequestTimeoutMs > 0
+      // branch before the isLocalProviderBaseUrl short-circuit, wrapping every
+      // stream call in streamWithIdleTimeout. If the run's AbortSignal is already
+      // aborted (e.g. after a session-lock cascade), that wrapper immediately
+      // aborts the stream controller and every fetch fails with AbortError at ~3ms.
+      // Without requestTimeoutMs the idle-timeout path returns 0 for 127.0.0.1
+      // URLs so no wrapping occurs. The run-level signal still provides
+      // cancellation (180 s for cron jobs).
       // -----------------------------------------------------------------------
       normalizeResolvedModel: (_ctx: ProviderNormalizeResolvedModelContext) => {
-        const timeoutSeconds = (api.config as any)?.timeoutSeconds ?? 600;
-        return {
-          ..._ctx.model,
-          requestTimeoutMs: timeoutSeconds * 1000,
-        };
+        return { ..._ctx.model };
       },
 
       // -----------------------------------------------------------------------
-      // Hook: Participate in config materialization so timeoutSeconds from
-      // models.providers.snowflake-cortex.timeoutSeconds flows through.
+      // Hook: Participate in config materialization.
       // -----------------------------------------------------------------------
       applyConfigDefaults: (_ctx: ProviderApplyConfigDefaultsContext) => {
-        // Signal that this provider participates in config materialization.
-        // No defaults to set — timeoutSeconds is read in normalizeResolvedModel.
         return null;
       },
 

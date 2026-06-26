@@ -34,6 +34,49 @@
 
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+// ---------------------------------------------------------------------------
+// undici Agent — long-lived dispatcher for outbound Snowflake streaming calls.
+//
+// bodyTimeout:0  prevents undici from dropping the connection mid-stream
+//                during extended thinking phases where Snowflake emits no SSE
+//                tokens for many seconds (default 300s is too short).
+// keepAliveTimeout:95s must outlast the OpenClaw gateway-side undici Agent
+//                (90s) so the proxy never closes a connection the gateway
+//                still considers live, which would produce "terminated" errors.
+// headersTimeout: 30s covers the initial TLS + connection setup to Snowflake.
+// ---------------------------------------------------------------------------
+
+let _snowflakeAgent = null;
+// Node 24 ships undici 7 internally; openclaw bundles undici 8. Using an
+// undici 8 Agent as a dispatcher with Node's globalThis.fetch (undici 7)
+// causes "invalid content-length header" / "invalid onRequestStart method"
+// errors due to API incompatibility. Fix: use the same undici module's own
+// fetch() for upstream Snowflake calls so the Agent and fetch are always
+// from the same version.
+let _snowflakeFetch = globalThis.fetch;
+try {
+  const _require = createRequire(import.meta.url);
+  // Prefer openclaw's bundled undici; fall back to the system package.
+  let undici;
+  try {
+    undici = _require("/home/ubuntu/.npm-global/lib/node_modules/openclaw/node_modules/undici");
+  } catch {
+    undici = _require("undici");
+  }
+  _snowflakeAgent = new undici.Agent({
+    headersTimeout: 30_000,
+    bodyTimeout: 0,           // no timeout on response body stream
+    keepAliveTimeout: 95_000, // outlast gateway-side Agent (90s)
+    keepAliveMaxTimeout: 300_000,
+  });
+  // Use undici's own fetch so Agent and fetch share the same undici version.
+  _snowflakeFetch = undici.fetch.bind(undici);
+  console.log("[frostclaw-proxy] undici Agent configured (bodyTimeout=0, keepAlive=95s)");
+} catch (e) {
+  console.warn(`[frostclaw-proxy] undici not available, using default dispatcher: ${e.message}`);
+}
 
 // ---------------------------------------------------------------------------
 // Shared constants (not config-dependent)
@@ -235,7 +278,7 @@ export function createProxyServer(config) {
 
         let sfJson;
         try {
-          const sfRes = await fetch(
+          const sfRes = await _snowflakeFetch(
             `${baseUrl}/api/v2/cortex/inference:embed`,
             {
               method: "POST",
@@ -347,11 +390,18 @@ export function createProxyServer(config) {
     }
 
     const _t0 = Date.now();
-    const sfRes = await fetch(targetUrl, {
+    const fetchOpts = {
       method: "POST",
       headers: forwardHeaders,
       body: bodyStr,
-    });
+    };
+    // Attach the long-lived undici Agent for streaming requests so Snowflake's
+    // extended thinking phases (no SSE tokens for many seconds) don't trigger
+    // a bodyTimeout disconnect on the outbound Snowflake connection.
+    if (isStreaming && _snowflakeAgent) {
+      fetchOpts.dispatcher = _snowflakeAgent;
+    }
+    const sfRes = await _snowflakeFetch(targetUrl, fetchOpts);
     console.log(`[frostclaw-proxy] upstream ${targetUrl.split('/').pop()} → ${sfRes.status} (${Date.now() - _t0}ms, reqBytes=${bodyStr.length})`);
 
     // If upstream errored with 4xx/5xx on a "streaming" request, the body is
@@ -722,12 +772,15 @@ export function createProxyServer(config) {
     );
   });
 
-  // keepAliveTimeout must exceed undici's connection reuse window (~4s).
-  // Node.js default is 5000ms which races with undici keep-alive reuse — causes
-  // "terminated" errors on Node.js fetch (lancedb-pro uses OpenAI SDK / undici).
-  // Set to 65s to safely outlast undici's 60s idle timeout.
-  server.keepAliveTimeout = 65_000;
-  server.headersTimeout = 66_000;
+  // keepAliveTimeout must outlast both:
+  //   (a) undici's 60s idle window — avoids "terminated" errors on keep-alive
+  //       connection reuse from callers using undici/OpenAI SDK.
+  //   (b) the OpenClaw gateway-side undici Agent keepAliveTimeout (90s) — if
+  //       the proxy closes a connection before the gateway expects, the gateway
+  //       gets a "terminated" error on the next reuse attempt.
+  // 95s is the minimum safe value that outlasts both windows.
+  server.keepAliveTimeout = 95_000;
+  server.headersTimeout = 96_000;
   return {
     server,
     close() {

@@ -245,3 +245,63 @@ export function clampMaxTokens(payload: Record<string, unknown>): void {
 export function isClaudeModel(modelId: string): boolean {
   return modelId.toLowerCase().startsWith("claude");
 }
+
+// ---------------------------------------------------------------------------
+// Document block stripping — Snowflake Cortex does not support native PDF
+// document blocks (Anthropic API feature). Strip before forwarding.
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip native document/PDF content blocks from messages before sending to
+ * Snowflake Cortex. Snowflake rejects document blocks with HTTP 401 because
+ * its Anthropic Messages endpoint is a strict subset of the full Anthropic
+ * API — native PDF document blocks are not supported.
+ *
+ * Each stripped document block is replaced with a plain-text placeholder
+ * noting the content was removed, so the model still sees a description
+ * rather than a silent gap in the conversation.
+ *
+ * Returns the original array reference when no document blocks are found
+ * (zero-allocation fast path — the common case).
+ */
+export function stripDocumentBlocks(messages: unknown[]): unknown[] {
+  // Fast path: scan for any document block before allocating.
+  let needsFix = false;
+  outer: for (const msg of messages) {
+    if (!msg || typeof msg !== "object") continue;
+    const m = msg as Record<string, unknown>;
+    if (!Array.isArray(m.content)) continue;
+    for (const block of m.content) {
+      if (!block || typeof block !== "object") continue;
+      if ((block as Record<string, unknown>).type === "document") {
+        needsFix = true;
+        break outer;
+      }
+    }
+  }
+  if (!needsFix) return messages;
+
+  // Slow path: replace document blocks with text placeholders.
+  return messages.map((msg) => {
+    if (!msg || typeof msg !== "object") return msg;
+    const m = msg as Record<string, unknown>;
+    if (!Array.isArray(m.content)) return msg;
+    const hasDoc = (m.content as unknown[]).some(
+      (b) => b && typeof b === "object" && (b as Record<string, unknown>).type === "document",
+    );
+    if (!hasDoc) return msg;
+    const fixed = (m.content as unknown[]).map((block: unknown) => {
+      if (!block || typeof block !== "object") return block;
+      const b = block as Record<string, unknown>;
+      if (b.type !== "document") return block;
+      const source = b.source as Record<string, unknown> | undefined;
+      const mediaType = typeof source?.media_type === "string" ? source.media_type : "unknown";
+      const title = typeof b.title === "string" ? ` ("${b.title}")` : "";
+      return {
+        type: "text",
+        text: `[PDF/document block stripped${title} — Snowflake Cortex does not support native document blocks; media_type=${mediaType}]`,
+      };
+    });
+    return { ...m, content: fixed };
+  });
+}
