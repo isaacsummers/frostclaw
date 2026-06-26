@@ -270,6 +270,7 @@ const BETA_THINKING = [
 import {
   fixTrailingAssistant,
   fixEmptyTextBlocks,
+  stripResponseFormat,
   levelBudget,
   levelEffort,
   normalizeThinkingBudget,
@@ -980,6 +981,12 @@ export default definePluginEntry({
                   // also scrub it here so any future SDK regression or alternate
                   // code path can't re-introduce a Cortex-fatal field.
                   stripEagerInputStreaming(record);
+                  // Strip response_format — Snowflake Cortex rejects both
+                  // json_object and json_schema response_format values with
+                  // HTTP 400. Graphiti-core's json_object mode already injects
+                  // the schema into the prompt, so structured output still
+                  // works without the API-level constraint.
+                  stripResponseFormat(record);
                   normalizeThinkingBudget(
                     record,
                     thinkingLevel,

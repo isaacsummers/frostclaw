@@ -142,6 +142,11 @@ function clampMaxTokens(payload) {
 function isClaudeModel(modelId) {
   return modelId.toLowerCase().startsWith("claude");
 }
+function stripResponseFormat(payload) {
+  if ("response_format" in payload) {
+    delete payload.response_format;
+  }
+}
 function stripDocumentBlocks(messages) {
   let needsFix = false;
   outer:

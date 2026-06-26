@@ -235,96 +235,7 @@ function repairAnthropicToolPairing(messages) {
   return { messages: changed ? out : messages, changed };
 }
 
-/**
- * Rewrite a JSON Schema to satisfy Snowflake Cortex's strict validator.
- *
- * Snowflake rejects pydantic-style nullable anyOf patterns like:
- *   { anyOf: [{type: "string", format: "date-time"}, {type: "null"}] }
- * and requires either a plain scalar type or omitting the field.
- *
- * Strategy: replace anyOf/oneOf where one branch is {type:"null"} and the
- * other is a single concrete type with a merged nullable form that Snowflake
- * accepts: { type: ["string", "null"], ... }  — or for types Snowflake won't
- * accept in an array, fall back to just the non-null type (dropping nullability).
- *
- * Also strips "unevaluatedProperties", "additionalProperties": false, and any
- * other keywords that trigger Snowflake schema validation rejections.
- *
- * @param {any} schema - JSON Schema object (mutated in place)
- * @returns {any} the mutated schema
- */
-function rewriteSchemaForSnowflake(schema) {
-  if (!schema || typeof schema !== "object") return schema;
-  if (Array.isArray(schema)) {
-    schema.forEach(rewriteSchemaForSnowflake);
-    return schema;
-  }
 
-  // Recursively fix $defs / definitions first
-  if (schema.$defs)        Object.values(schema.$defs).forEach(rewriteSchemaForSnowflake);
-  if (schema.definitions)  Object.values(schema.definitions).forEach(rewriteSchemaForSnowflake);
-  if (schema.properties)   Object.values(schema.properties).forEach(rewriteSchemaForSnowflake);
-  if (schema.items)        rewriteSchemaForSnowflake(schema.items);
-  if (schema.allOf)        schema.allOf.forEach(rewriteSchemaForSnowflake);
-
-  // Snowflake doesn't allow unevaluatedProperties or additionalProperties: false
-  delete schema.unevaluatedProperties;
-  if (schema.additionalProperties === false) delete schema.additionalProperties;
-  // Snowflake's strict JSON schema validator rejects annotation keywords inside
-  // property schemas: title, description, default. These are valid JSON Schema
-  // but Snowflake's structured-output parser doesn't accept them.
-  // Safe to remove: LLM extraction schemas use these only as hints; the model
-  // fills fields from context, not from default values.
-  delete schema.title;
-  delete schema.description;
-  delete schema.default;
-
-  // Rewrite anyOf/oneOf nullable patterns
-  for (const key of ["anyOf", "oneOf"]) {
-    if (!Array.isArray(schema[key])) continue;
-    const branches = schema[key];
-    const nullIdx = branches.findIndex(b => b && b.type === "null" && Object.keys(b).length === 1);
-    if (nullIdx === -1) {
-      branches.forEach(rewriteSchemaForSnowflake);
-      continue;
-    }
-    const nonNullBranches = branches.filter((_, i) => i !== nullIdx);
-    if (nonNullBranches.length === 1) {
-      const concrete = nonNullBranches[0];
-      rewriteSchemaForSnowflake(concrete);
-      // Snowflake doesn't accept anyOf/oneOf or array type values.
-      // Flatten: pull all keys from the concrete branch into the parent schema,
-      // dropping the null union entirely. The field stays optional via 'default'.
-      const { ...rest } = concrete;
-      delete schema[key];
-      Object.assign(schema, rest);
-    } else {
-      // Multiple non-null branches — just recurse and leave as-is
-      branches.forEach(rewriteSchemaForSnowflake);
-    }
-  }
-
-  return schema;
-}
-
-/**
- * If a request body contains a response_format.json_schema, rewrite it
- * for Snowflake compatibility and return the modified body string.
- * Returns the original rawBody string if no rewrite is needed.
- *
- * @param {string} rawBody
- * @returns {string}
- */
-function rewriteResponseFormatSchema(rawBody) {
-  let body;
-  try { body = JSON.parse(rawBody); } catch { return rawBody; }
-  if (!body || typeof body !== "object") return rawBody;
-  const rf = body.response_format;
-  if (!rf || typeof rf !== "object") return rawBody;
-  if (rf.type !== "json_schema" || !rf.json_schema || typeof rf.json_schema.schema !== "object") return rawBody;
-  rewriteSchemaForSnowflake(rf.json_schema.schema);
-  return JSON.stringify(body);
-}
 
 // ---------------------------------------------------------------------------
 // Factory — createProxyServer(config)
@@ -800,10 +711,15 @@ export function createProxyServer(config) {
             body.max_completion_tokens = body.max_tokens;
             delete body.max_tokens;
           }
+          // Strip response_format — Snowflake Cortex rejects both json_object and
+          // json_schema. graphiti-core's json_object mode injects the schema into
+          // the prompt instead, so stripping here is safe.
+          if ("response_format" in body) {
+            delete body.response_format;
+            console.log("[frostclaw-proxy] stripped response_format (not supported by Snowflake Cortex)");
+          }
           forwardBody = JSON.stringify(body);
         }
-        // Rewrite response_format.json_schema for Snowflake compatibility
-        forwardBody = rewriteResponseFormatSchema(forwardBody);
 
         const syntheticReq = {
           headers: req.headers,
@@ -856,10 +772,15 @@ export function createProxyServer(config) {
             body.max_completion_tokens = body.max_tokens;
             delete body.max_tokens;
           }
+          // Strip response_format — Snowflake Cortex rejects both json_object and
+          // json_schema. graphiti-core's json_object mode injects the schema into
+          // the prompt instead, so stripping here is safe.
+          if ("response_format" in body) {
+            delete body.response_format;
+            console.log("[frostclaw-proxy] stripped response_format (not supported by Snowflake Cortex)");
+          }
           forwardBody = JSON.stringify(body);
         }
-        // Rewrite response_format.json_schema for Snowflake compatibility
-        forwardBody = rewriteResponseFormatSchema(forwardBody);
         const syntheticReq = {
           headers: req.headers,
           [Symbol.asyncIterator]: async function* () { yield Buffer.from(forwardBody); },

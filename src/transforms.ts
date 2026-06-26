@@ -247,6 +247,30 @@ export function isClaudeModel(modelId: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// response_format stripping — Snowflake Cortex does not support OpenAI-style
+// response_format (neither json_object nor json_schema). Strip the field
+// entirely so graphiti-core's prompt-injected schema guidance still works.
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip the `response_format` field from an outbound OpenAI chat completions
+ * payload before forwarding to Snowflake Cortex.
+ *
+ * Snowflake Cortex rejects both `{ type: "json_object" }` and
+ * `{ type: "json_schema", ... }` with HTTP 400. Removing the field lets the
+ * caller rely on prompt-level JSON schema injection (graphiti-core's
+ * json_object fallback path) instead of constrained decoding, which Cortex
+ * does not expose.
+ *
+ * Mutates payload in place; no-op when the field is absent.
+ */
+export function stripResponseFormat(payload: Record<string, unknown>): void {
+  if ("response_format" in payload) {
+    delete payload.response_format;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Document block stripping — Snowflake Cortex does not support native PDF
 // document blocks (Anthropic API feature). Strip before forwarding.
 // ---------------------------------------------------------------------------
