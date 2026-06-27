@@ -271,6 +271,7 @@ import {
   fixTrailingAssistant,
   fixEmptyTextBlocks,
   stripResponseFormat,
+  injectJsonSystemPrompt,
   levelBudget,
   levelEffort,
   normalizeThinkingBudget,
@@ -983,10 +984,16 @@ export default definePluginEntry({
                   stripEagerInputStreaming(record);
                   // Strip response_format — Snowflake Cortex rejects both
                   // json_object and json_schema response_format values with
-                  // HTTP 400. Graphiti-core's json_object mode already injects
-                  // the schema into the prompt, so structured output still
-                  // works without the API-level constraint.
-                  stripResponseFormat(record);
+                  // HTTP 400. When we strip it we inject a strong system
+                  // prompt so the model still returns valid JSON without
+                  // the API-level constraint.
+                  const strippedFormatType = stripResponseFormat(record);
+                  if (Array.isArray(record.messages)) {
+                    record.messages = injectJsonSystemPrompt(
+                      record.messages,
+                      strippedFormatType,
+                    );
+                  }
                   normalizeThinkingBudget(
                     record,
                     thinkingLevel,

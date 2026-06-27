@@ -45,7 +45,10 @@ import { createRequire } from "node:module";
 // keepAliveTimeout:95s must outlast the OpenClaw gateway-side undici Agent
 //                (90s) so the proxy never closes a connection the gateway
 //                still considers live, which would produce "terminated" errors.
-// headersTimeout: 30s covers the initial TLS + connection setup to Snowflake.
+// headersTimeout: 120s — non-streaming callers (e.g. graphiti-core) don't
+//                receive response headers until Snowflake finishes the full
+//                response. Complex structured-extraction prompts can take
+//                30-60s, so 30s was too tight. 120s gives ample headroom.
 // ---------------------------------------------------------------------------
 
 let _snowflakeAgent = null;
@@ -66,7 +69,7 @@ try {
     undici = _require("undici");
   }
   _snowflakeAgent = new undici.Agent({
-    headersTimeout: 30_000,
+    headersTimeout: 120_000,
     bodyTimeout: 0,           // no timeout on response body stream
     keepAliveTimeout: 95_000, // outlast gateway-side Agent (90s)
     keepAliveMaxTimeout: 300_000,
@@ -105,6 +108,54 @@ const STRIP_HEADERS = new Set([
   "authorization",
   "x-snowflake-authorization-token-type",
 ]);
+
+// ---------------------------------------------------------------------------
+// response_format stripping + JSON prompt injection
+// ---------------------------------------------------------------------------
+
+const JSON_ONLY_SYSTEM_PROMPT =
+  "You must respond with ONLY valid JSON. " +
+  "Do not include any text before or after the JSON object. " +
+  "Do not wrap the response in markdown code fences or backticks. " +
+  "Do not add explanations, comments, or any prose. " +
+  "Your entire response must be a single, complete, parseable JSON object.";
+
+/**
+ * Strip response_format from the body (Cortex rejects it for non-OpenAI models)
+ * and inject a strong system prompt so the model still returns valid JSON.
+ *
+ * @param {Record<string,unknown>} body - parsed request body (mutated in place)
+ * @returns {string|null} the stripped type ("json_object"/"json_schema") or null
+ */
+function stripResponseFormatAndInjectPrompt(body) {
+  if (!("response_format" in body)) return null;
+  const rf = body.response_format;
+  const type = (rf && typeof rf === "object" && typeof rf.type === "string")
+    ? rf.type : "json_object";
+  delete body.response_format;
+
+  // Inject a JSON-only instruction into the system message.
+  if (Array.isArray(body.messages)) {
+    const sysIdx = body.messages.findIndex((m) => m && m.role === "system");
+    if (sysIdx === -1) {
+      body.messages = [{ role: "system", content: JSON_ONLY_SYSTEM_PROMPT }, ...body.messages];
+    } else {
+      const sys = { ...body.messages[sysIdx] };
+      if (typeof sys.content === "string") {
+        sys.content = JSON_ONLY_SYSTEM_PROMPT + "\n\n" + sys.content;
+      } else if (Array.isArray(sys.content)) {
+        sys.content = [{ type: "text", text: JSON_ONLY_SYSTEM_PROMPT }, ...sys.content];
+      } else {
+        sys.content = JSON_ONLY_SYSTEM_PROMPT;
+      }
+      const msgs = [...body.messages];
+      msgs[sysIdx] = sys;
+      body.messages = msgs;
+    }
+  }
+
+  return type;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers (stateless, not config-dependent)
@@ -703,20 +754,24 @@ export function createProxyServer(config) {
           if (typeof body.model === "string") {
             body.model = body.model
               .replace(/^snowflake-cortex\//, "")
-              .replace(/^openai-/, "");
+              .replace(/^openai\//, ""); // strip "openai/" provider prefix but keep "openai-" in model name
+            // e.g. "openai/openai-gpt-4.1" → "openai-gpt-4.1" (correct Cortex name)
           }
+          const isOpenAIModel = typeof body.model === "string" && body.model.startsWith("openai-");
           const promptChars = (body.messages ?? []).reduce((n, m) => n + (typeof m.content === "string" ? m.content.length : JSON.stringify(m.content).length), 0);
-          console.log(`[frostclaw-proxy] chat/completions model: ${originalModel} → ${body.model} promptChars=${promptChars}`);
+          console.log(`[frostclaw-proxy] chat/completions model: ${originalModel} → ${body.model} isOpenAI=${isOpenAIModel} promptChars=${promptChars}`);
           if ("max_tokens" in body) {
             body.max_completion_tokens = body.max_tokens;
             delete body.max_tokens;
           }
-          // Strip response_format — Snowflake Cortex rejects both json_object and
-          // json_schema. graphiti-core's json_object mode injects the schema into
-          // the prompt instead, so stripping here is safe.
-          if ("response_format" in body) {
-            delete body.response_format;
-            console.log("[frostclaw-proxy] stripped response_format (not supported by Snowflake Cortex)");
+          // Strip response_format for non-OpenAI models — Snowflake Cortex rejects
+          // both json_object and json_schema for Claude/Llama/Mistral models.
+          // OpenAI models (openai-gpt-4.1 etc.) support response_format natively
+          // so we pass it through for those. When stripping, inject a strong
+          // system prompt so the model still returns valid JSON.
+          if ("response_format" in body && !isOpenAIModel) {
+            const stripped = stripResponseFormatAndInjectPrompt(body);
+            console.log(`[frostclaw-proxy] stripped response_format type=${stripped} and injected JSON system prompt`);
           }
           forwardBody = JSON.stringify(body);
         }
@@ -764,20 +819,22 @@ export function createProxyServer(config) {
           if (typeof body.model === "string") {
             body.model = body.model
               .replace(/^snowflake-cortex\//, "")
-              .replace(/^openai-/, "");
+              .replace(/^openai\//, ""); // strip "openai/" provider prefix but keep "openai-" in model name
+            // e.g. "openai/openai-gpt-4.1" → "openai-gpt-4.1" (correct Cortex name)
           }
+          const isOpenAIModel = typeof body.model === "string" && body.model.startsWith("openai-");
           const promptChars = (body.messages ?? []).reduce((n, m) => n + (typeof m.content === "string" ? m.content.length : JSON.stringify(m.content).length), 0);
-          console.log(`[frostclaw-proxy] chat/completions (v1 alias) model: ${originalModel} → ${body.model} promptChars=${promptChars}`);
+          console.log(`[frostclaw-proxy] chat/completions (v1 alias) model: ${originalModel} → ${body.model} isOpenAI=${isOpenAIModel} promptChars=${promptChars}`);
           if ("max_tokens" in body) {
             body.max_completion_tokens = body.max_tokens;
             delete body.max_tokens;
           }
-          // Strip response_format — Snowflake Cortex rejects both json_object and
-          // json_schema. graphiti-core's json_object mode injects the schema into
-          // the prompt instead, so stripping here is safe.
-          if ("response_format" in body) {
-            delete body.response_format;
-            console.log("[frostclaw-proxy] stripped response_format (not supported by Snowflake Cortex)");
+          // Strip response_format for non-OpenAI models — Cortex rejects it for Claude/Llama/Mistral.
+          // OpenAI models (openai-gpt-4.1) support it natively, so pass it through for those.
+          // When stripping, inject a strong system prompt so the model still returns valid JSON.
+          if ("response_format" in body && !isOpenAIModel) {
+            const stripped = stripResponseFormatAndInjectPrompt(body);
+            console.log(`[frostclaw-proxy] stripped response_format (v1 alias) type=${stripped} and injected JSON system prompt`);
           }
           forwardBody = JSON.stringify(body);
         }

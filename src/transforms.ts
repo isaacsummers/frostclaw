@@ -257,17 +257,85 @@ export function isClaudeModel(modelId: string): boolean {
  * payload before forwarding to Snowflake Cortex.
  *
  * Snowflake Cortex rejects both `{ type: "json_object" }` and
- * `{ type: "json_schema", ... }` with HTTP 400. Removing the field lets the
- * caller rely on prompt-level JSON schema injection (graphiti-core's
- * json_object fallback path) instead of constrained decoding, which Cortex
- * does not expose.
+ * `{ type: "json_schema", ... }` with HTTP 400. Removing the field loses the
+ * structured-output constraint, so when we strip we inject a strong system
+ * prompt instructing the model to return only valid JSON — this keeps
+ * downstream parsers (e.g. graphiti-core) from receiving empty or
+ * unstructured responses.
  *
- * Mutates payload in place; no-op when the field is absent.
+ * Returns the `type` string that was stripped ("json_object", "json_schema",
+ * etc.) so the caller can decide what prompt to inject, or `null` when the
+ * field was absent.
+ *
+ * Mutates payload in place.
  */
-export function stripResponseFormat(payload: Record<string, unknown>): void {
-  if ("response_format" in payload) {
-    delete payload.response_format;
+export function stripResponseFormat(
+  payload: Record<string, unknown>,
+): string | null {
+  if (!("response_format" in payload)) return null;
+  const rf = payload.response_format as Record<string, unknown> | undefined;
+  const type = typeof rf?.type === "string" ? rf.type : "json_object";
+  delete payload.response_format;
+  return type;
+}
+
+const JSON_OBJECT_SYSTEM_PROMPT =
+  "You must respond with ONLY valid JSON. " +
+  "Do not include any text before or after the JSON object. " +
+  "Do not wrap the response in markdown code fences or backticks. " +
+  "Do not add explanations, comments, or any prose. " +
+  "Your entire response must be a single, complete, parseable JSON object.";
+
+/**
+ * After stripping `response_format`, inject a strong system-prompt instruction
+ * so the model still returns valid JSON without the API-level constraint.
+ *
+ * Handles both string-content and array-content system messages:
+ * - If a system message already exists, prepends the JSON instruction to its
+ *   content so the original prompt is preserved.
+ * - If no system message exists, inserts one at position 0.
+ *
+ * No-op when `strippedType` is null (i.e. nothing was stripped).
+ */
+export function injectJsonSystemPrompt(
+  messages: unknown[],
+  strippedType: string | null,
+): unknown[] {
+  if (!strippedType) return messages;
+
+  const prefix = JSON_OBJECT_SYSTEM_PROMPT;
+
+  // Find an existing system message.
+  const sysIdx = messages.findIndex(
+    (m) =>
+      m && typeof m === "object" &&
+      (m as Record<string, unknown>).role === "system",
+  );
+
+  if (sysIdx === -1) {
+    // No system message — prepend one.
+    return [{ role: "system", content: prefix }, ...messages];
   }
+
+  // Mutate a copy of the messages array, not the original.
+  const result = [...messages];
+  const sys = { ...(result[sysIdx] as Record<string, unknown>) };
+
+  if (typeof sys.content === "string") {
+    sys.content = `${prefix}\n\n${sys.content}`;
+  } else if (Array.isArray(sys.content)) {
+    // Array-form content blocks (Anthropic style that leaked in).
+    sys.content = [
+      { type: "text", text: prefix },
+      ...sys.content,
+    ];
+  } else {
+    // Unknown shape — replace with string.
+    sys.content = prefix;
+  }
+
+  result[sysIdx] = sys;
+  return result;
 }
 
 // ---------------------------------------------------------------------------

@@ -150,9 +150,38 @@ function isClaudeModel(modelId) {
   return modelId.toLowerCase().startsWith("claude");
 }
 function stripResponseFormat(payload) {
-  if ("response_format" in payload) {
-    delete payload.response_format;
+  if (!("response_format" in payload))
+    return null;
+  const rf = payload.response_format;
+  const type = typeof rf?.type === "string" ? rf.type : "json_object";
+  delete payload.response_format;
+  return type;
+}
+var JSON_OBJECT_SYSTEM_PROMPT = "You must respond with ONLY valid JSON. " + "Do not include any text before or after the JSON object. " + "Do not wrap the response in markdown code fences or backticks. " + "Do not add explanations, comments, or any prose. " + "Your entire response must be a single, complete, parseable JSON object.";
+function injectJsonSystemPrompt(messages, strippedType) {
+  if (!strippedType)
+    return messages;
+  const prefix = JSON_OBJECT_SYSTEM_PROMPT;
+  const sysIdx = messages.findIndex((m) => m && typeof m === "object" && m.role === "system");
+  if (sysIdx === -1) {
+    return [{ role: "system", content: prefix }, ...messages];
   }
+  const result = [...messages];
+  const sys = { ...result[sysIdx] };
+  if (typeof sys.content === "string") {
+    sys.content = `${prefix}
+
+${sys.content}`;
+  } else if (Array.isArray(sys.content)) {
+    sys.content = [
+      { type: "text", text: prefix },
+      ...sys.content
+    ];
+  } else {
+    sys.content = prefix;
+  }
+  result[sysIdx] = sys;
+  return result;
 }
 function stripDocumentBlocks(messages) {
   let needsFix = false;
@@ -1040,7 +1069,10 @@ var frostclaw_default = definePluginEntry({
                       record.messages = stripDocumentBlocks(record.messages);
                     }
                     stripEagerInputStreaming(record);
-                    stripResponseFormat(record);
+                    const strippedFormatType = stripResponseFormat(record);
+                    if (Array.isArray(record.messages)) {
+                      record.messages = injectJsonSystemPrompt(record.messages, strippedFormatType);
+                    }
                     normalizeThinkingBudget(record, thinkingLevel, isAdaptiveOnly(String(model?.id ?? "")));
                     clampMaxTokens(record);
                   }
