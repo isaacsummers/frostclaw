@@ -159,8 +159,9 @@ function stripResponseFormat(payload) {
 }
 var JSON_OBJECT_SYSTEM_PROMPT = "You must respond with ONLY valid JSON. " + "Do not include any text before or after the JSON object. " + "Do not wrap the response in markdown code fences or backticks. " + "Do not add explanations, comments, or any prose. " + "Your entire response must be a single, complete, parseable JSON object.";
 function injectJsonSystemPrompt(messages, strippedType) {
-  if (!strippedType)
+  if (strippedType !== "json_object" && strippedType !== "json_schema") {
     return messages;
+  }
   const prefix = JSON_OBJECT_SYSTEM_PROMPT;
   const sysIdx = messages.findIndex((m) => m && typeof m === "object" && m.role === "system");
   if (sysIdx === -1) {

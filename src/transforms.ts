@@ -301,7 +301,12 @@ export function injectJsonSystemPrompt(
   messages: unknown[],
   strippedType: string | null,
 ): unknown[] {
-  if (!strippedType) return messages;
+  // Only inject when the caller actually wanted JSON output.
+  // response_format can also be { type: "text" } — injecting a JSON
+  // constraint in that case would be actively wrong.
+  if (strippedType !== "json_object" && strippedType !== "json_schema") {
+    return messages;
+  }
 
   const prefix = JSON_OBJECT_SYSTEM_PROMPT;
 

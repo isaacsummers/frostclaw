@@ -134,8 +134,11 @@ function stripResponseFormatAndInjectPrompt(body) {
     ? rf.type : "json_object";
   delete body.response_format;
 
-  // Inject a JSON-only instruction into the system message.
-  if (Array.isArray(body.messages)) {
+  // Only inject the JSON-only system prompt when the caller actually wanted
+  // JSON output. response_format can also be { type: "text" }, in which case
+  // injecting a JSON constraint would be actively wrong.
+  const needsJson = type === "json_object" || type === "json_schema";
+  if (needsJson && Array.isArray(body.messages)) {
     const sysIdx = body.messages.findIndex((m) => m && m.role === "system");
     if (sysIdx === -1) {
       body.messages = [{ role: "system", content: JSON_ONLY_SYSTEM_PROMPT }, ...body.messages];
