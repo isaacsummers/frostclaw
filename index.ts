@@ -987,11 +987,11 @@ export default definePluginEntry({
                   // HTTP 400. When we strip it we inject a strong system
                   // prompt so the model still returns valid JSON without
                   // the API-level constraint.
-                  const strippedFormatType = stripResponseFormat(record);
+                  const stripped = stripResponseFormat(record);
                   if (Array.isArray(record.messages)) {
                     record.messages = injectJsonSystemPrompt(
                       record.messages,
-                      strippedFormatType,
+                      stripped,
                     );
                   }
                   normalizeThinkingBudget(

@@ -154,15 +154,25 @@ function stripResponseFormat(payload) {
     return null;
   const rf = payload.response_format;
   const type = typeof rf?.type === "string" ? rf.type : "json_object";
+  const schema = type === "json_schema" ? rf?.json_schema?.schema : undefined;
   delete payload.response_format;
-  return type;
+  return { type, schema };
 }
 var JSON_OBJECT_SYSTEM_PROMPT = "You must respond with ONLY valid JSON. " + "Do not include any text before or after the JSON object. " + "Do not wrap the response in markdown code fences or backticks. " + "Do not add explanations, comments, or any prose. " + "Your entire response must be a single, complete, parseable JSON object.";
-function injectJsonSystemPrompt(messages, strippedType) {
-  if (strippedType !== "json_object" && strippedType !== "json_schema") {
+function buildJsonPrompt(type, schema) {
+  if (type === "json_schema" && schema !== undefined) {
+    return `You must respond with ONLY valid JSON conforming exactly to this schema:
+` + JSON.stringify(schema, null, 2) + `
+
+` + "Do not include any text before or after the JSON. " + "Do not wrap in markdown code fences or backticks. " + "No explanations, comments, or prose. " + "Your entire response must be a single, complete, parseable JSON object matching the schema above.";
+  }
+  return JSON_OBJECT_SYSTEM_PROMPT;
+}
+function injectJsonSystemPrompt(messages, stripped) {
+  if (stripped?.type !== "json_object" && stripped?.type !== "json_schema") {
     return messages;
   }
-  const prefix = JSON_OBJECT_SYSTEM_PROMPT;
+  const prefix = buildJsonPrompt(stripped.type, stripped.schema);
   const sysIdx = messages.findIndex((m) => m && typeof m === "object" && m.role === "system");
   if (sysIdx === -1) {
     return [{ role: "system", content: prefix }, ...messages];
@@ -1070,9 +1080,9 @@ var frostclaw_default = definePluginEntry({
                       record.messages = stripDocumentBlocks(record.messages);
                     }
                     stripEagerInputStreaming(record);
-                    const strippedFormatType = stripResponseFormat(record);
+                    const stripped = stripResponseFormat(record);
                     if (Array.isArray(record.messages)) {
-                      record.messages = injectJsonSystemPrompt(record.messages, strippedFormatType);
+                      record.messages = injectJsonSystemPrompt(record.messages, stripped);
                     }
                     normalizeThinkingBudget(record, thinkingLevel, isAdaptiveOnly(String(model?.id ?? "")));
                     clampMaxTokens(record);

@@ -257,26 +257,28 @@ export function isClaudeModel(modelId: string): boolean {
  * payload before forwarding to Snowflake Cortex.
  *
  * Snowflake Cortex rejects both `{ type: "json_object" }` and
- * `{ type: "json_schema", ... }` with HTTP 400. Removing the field loses the
- * structured-output constraint, so when we strip we inject a strong system
- * prompt instructing the model to return only valid JSON — this keeps
- * downstream parsers (e.g. graphiti-core) from receiving empty or
- * unstructured responses.
+ * `{ type: "json_schema", ... }` with HTTP 400. When stripping json_schema,
+ * the schema definition is returned so the caller can embed it in a prompt.
  *
- * Returns the `type` string that was stripped ("json_object", "json_schema",
- * etc.) so the caller can decide what prompt to inject, or `null` when the
- * field was absent.
+ * Returns `{ type, schema }` where `type` is the stripped format type
+ * ("json_object", "json_schema", "text", etc.) and `schema` is the
+ * `json_schema.schema` object when type is "json_schema" (else undefined).
+ * Returns `null` when the field was absent.
  *
  * Mutates payload in place.
  */
 export function stripResponseFormat(
   payload: Record<string, unknown>,
-): string | null {
+): { type: string; schema?: unknown } | null {
   if (!("response_format" in payload)) return null;
   const rf = payload.response_format as Record<string, unknown> | undefined;
   const type = typeof rf?.type === "string" ? rf.type : "json_object";
+  const schema =
+    type === "json_schema"
+      ? (rf?.json_schema as Record<string, unknown> | undefined)?.schema
+      : undefined;
   delete payload.response_format;
-  return type;
+  return { type, schema };
 }
 
 const JSON_OBJECT_SYSTEM_PROMPT =
@@ -287,28 +289,55 @@ const JSON_OBJECT_SYSTEM_PROMPT =
   "Your entire response must be a single, complete, parseable JSON object.";
 
 /**
+ * Build the appropriate JSON system prompt.
+ * For json_schema with a schema definition, embeds the schema so the model
+ * knows the exact structure expected.
+ * For json_object (or json_schema without a schema), uses the generic prompt.
+ */
+function buildJsonPrompt(type: string, schema?: unknown): string {
+  if (type === "json_schema" && schema !== undefined) {
+    return (
+      "You must respond with ONLY valid JSON conforming exactly to this schema:\n" +
+      JSON.stringify(schema, null, 2) + "\n\n" +
+      "Do not include any text before or after the JSON. " +
+      "Do not wrap in markdown code fences or backticks. " +
+      "No explanations, comments, or prose. " +
+      "Your entire response must be a single, complete, parseable JSON object matching the schema above."
+    );
+  }
+  return JSON_OBJECT_SYSTEM_PROMPT;
+}
+
+/**
  * After stripping `response_format`, inject a strong system-prompt instruction
  * so the model still returns valid JSON without the API-level constraint.
+ *
+ * For json_schema, embeds the actual schema in the prompt so the model knows
+ * the exact structure expected. For json_object, uses a generic JSON-only
+ * instruction.
  *
  * Handles both string-content and array-content system messages:
  * - If a system message already exists, prepends the JSON instruction to its
  *   content so the original prompt is preserved.
  * - If no system message exists, inserts one at position 0.
  *
- * No-op when `strippedType` is null (i.e. nothing was stripped).
+ * No-op when stripped is null or type is not json_object/json_schema.
  */
 export function injectJsonSystemPrompt(
   messages: unknown[],
-  strippedType: string | null,
+  stripped: { type: string; schema?: unknown } | null,
 ): unknown[] {
   // Only inject when the caller actually wanted JSON output.
   // response_format can also be { type: "text" } — injecting a JSON
   // constraint in that case would be actively wrong.
-  if (strippedType !== "json_object" && strippedType !== "json_schema") {
+  if (
+    stripped?.type !== "json_object" &&
+    stripped?.type !== "json_schema"
+  ) {
     return messages;
   }
 
-  const prefix = JSON_OBJECT_SYSTEM_PROMPT;
+  const prefix = buildJsonPrompt(stripped.type, stripped.schema);
 
   // Find an existing system message.
   const sysIdx = messages.findIndex(

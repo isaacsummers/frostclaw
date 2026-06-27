@@ -121,8 +121,38 @@ const JSON_ONLY_SYSTEM_PROMPT =
   "Your entire response must be a single, complete, parseable JSON object.";
 
 /**
+ * Build the appropriate JSON system prompt based on the response_format type.
+ * For json_schema, embeds the actual schema so the model knows the structure.
+ * For json_object, returns the generic JSON-only instruction.
+ *
+ * @param {string} type - "json_object" or "json_schema"
+ * @param {unknown} rf  - the original response_format value (before deletion)
+ * @returns {string}
+ */
+function buildJsonPrompt(type, rf) {
+  if (type === "json_schema") {
+    const schema = rf?.json_schema?.schema;
+    if (schema) {
+      return (
+        "You must respond with ONLY valid JSON conforming exactly to this schema:\n" +
+        JSON.stringify(schema, null, 2) + "\n\n" +
+        "Do not include any text before or after the JSON. " +
+        "Do not wrap in markdown code fences or backticks. " +
+        "No explanations, comments, or prose. " +
+        "Your entire response must be a single, complete, parseable JSON object matching the schema above."
+      );
+    }
+  }
+  // json_object, or json_schema without a schema definition — use generic prompt.
+  return JSON_ONLY_SYSTEM_PROMPT;
+}
+
+/**
  * Strip response_format from the body (Cortex rejects it for non-OpenAI models)
  * and inject a strong system prompt so the model still returns valid JSON.
+ *
+ * For json_schema, extracts the schema before stripping and embeds it in the
+ * injected prompt so the model knows the exact structure expected.
  *
  * @param {Record<string,unknown>} body - parsed request body (mutated in place)
  * @returns {string|null} the stripped type ("json_object"/"json_schema") or null
@@ -132,24 +162,29 @@ function stripResponseFormatAndInjectPrompt(body) {
   const rf = body.response_format;
   const type = (rf && typeof rf === "object" && typeof rf.type === "string")
     ? rf.type : "json_object";
+
+  // Only inject when the caller actually wanted JSON output.
+  // response_format can also be { type: "text" }, in which case injecting a
+  // JSON constraint would be actively wrong.
+  const needsJson = type === "json_object" || type === "json_schema";
+
+  // Extract schema (for json_schema) BEFORE deleting the field.
+  const prompt = needsJson ? buildJsonPrompt(type, rf) : null;
+
   delete body.response_format;
 
-  // Only inject the JSON-only system prompt when the caller actually wanted
-  // JSON output. response_format can also be { type: "text" }, in which case
-  // injecting a JSON constraint would be actively wrong.
-  const needsJson = type === "json_object" || type === "json_schema";
-  if (needsJson && Array.isArray(body.messages)) {
+  if (prompt && Array.isArray(body.messages)) {
     const sysIdx = body.messages.findIndex((m) => m && m.role === "system");
     if (sysIdx === -1) {
-      body.messages = [{ role: "system", content: JSON_ONLY_SYSTEM_PROMPT }, ...body.messages];
+      body.messages = [{ role: "system", content: prompt }, ...body.messages];
     } else {
       const sys = { ...body.messages[sysIdx] };
       if (typeof sys.content === "string") {
-        sys.content = JSON_ONLY_SYSTEM_PROMPT + "\n\n" + sys.content;
+        sys.content = prompt + "\n\n" + sys.content;
       } else if (Array.isArray(sys.content)) {
-        sys.content = [{ type: "text", text: JSON_ONLY_SYSTEM_PROMPT }, ...sys.content];
+        sys.content = [{ type: "text", text: prompt }, ...sys.content];
       } else {
-        sys.content = JSON_ONLY_SYSTEM_PROMPT;
+        sys.content = prompt;
       }
       const msgs = [...body.messages];
       msgs[sysIdx] = sys;
