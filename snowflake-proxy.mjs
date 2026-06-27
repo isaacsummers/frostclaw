@@ -150,30 +150,36 @@ function buildJsonPrompt(type, rf) {
 /**
  * Strip response_format from the body (Cortex rejects it for non-OpenAI models)
  * and inject a strong system prompt so the model still returns valid JSON.
+ /**
+ * Inject a hardened JSON system prompt into the messages array when the
+ * caller is requesting JSON output via response_format.
  *
- * For json_schema, extracts the schema before stripping and embeds it in the
- * injected prompt so the model knows the exact structure expected.
+ * Always injected regardless of model type — for OpenAI models this also
+ * satisfies Snowflake Cortex's requirement that the messages contain the word
+ * "json" when response_format is set. For non-OpenAI models, the field will
+ * be stripped separately (Cortex rejects it), so the prompt is the only
+ * structural-output constraint.
+ *
+ * For json_schema, extracts the schema before the field is deleted and embeds
+ * it in the prompt so the model knows the exact structure expected.
  *
  * @param {Record<string,unknown>} body - parsed request body (mutated in place)
- * @returns {string|null} the stripped type ("json_object"/"json_schema") or null
+ * @returns {string|null} the format type ("json_object"/"json_schema") or null
  */
-function stripResponseFormatAndInjectPrompt(body) {
+function injectJsonPromptFromResponseFormat(body) {
   if (!("response_format" in body)) return null;
   const rf = body.response_format;
   const type = (rf && typeof rf === "object" && typeof rf.type === "string")
     ? rf.type : "json_object";
 
   // Only inject when the caller actually wanted JSON output.
-  // response_format can also be { type: "text" }, in which case injecting a
-  // JSON constraint would be actively wrong.
   const needsJson = type === "json_object" || type === "json_schema";
+  if (!needsJson) return type;
 
-  // Extract schema (for json_schema) BEFORE deleting the field.
-  const prompt = needsJson ? buildJsonPrompt(type, rf) : null;
+  // Extract schema (for json_schema) while we still have the field.
+  const prompt = buildJsonPrompt(type, rf);
 
-  delete body.response_format;
-
-  if (prompt && Array.isArray(body.messages)) {
+  if (Array.isArray(body.messages)) {
     const sysIdx = body.messages.findIndex((m) => m && m.role === "system");
     if (sysIdx === -1) {
       body.messages = [{ role: "system", content: prompt }, ...body.messages];
@@ -192,6 +198,22 @@ function stripResponseFormatAndInjectPrompt(body) {
     }
   }
 
+  return type;
+}
+
+/**
+ * Strip response_format from the body and inject a hardened JSON prompt.
+ *
+ * Used for non-OpenAI models where Snowflake Cortex rejects response_format.
+ * Injection is handled first via injectJsonPromptFromResponseFormat so the
+ * schema is captured before the field is deleted.
+ *
+ * @param {Record<string,unknown>} body - parsed request body (mutated in place)
+ * @returns {string|null} the stripped type or null
+ */
+function stripResponseFormatAndInjectPrompt(body) {
+  const type = injectJsonPromptFromResponseFormat(body);
+  if (type !== null) delete body.response_format;
   return type;
 }
 
@@ -802,14 +824,20 @@ export function createProxyServer(config) {
             body.max_completion_tokens = body.max_tokens;
             delete body.max_tokens;
           }
-          // Strip response_format for non-OpenAI models — Snowflake Cortex rejects
-          // both json_object and json_schema for Claude/Llama/Mistral models.
-          // OpenAI models (openai-gpt-4.1 etc.) support response_format natively
-          // so we pass it through for those. When stripping, inject a strong
-          // system prompt so the model still returns valid JSON.
-          if ("response_format" in body && !isOpenAIModel) {
-            const stripped = stripResponseFormatAndInjectPrompt(body);
-            console.log(`[frostclaw-proxy] stripped response_format type=${stripped} and injected JSON system prompt`);
+          // For all models: inject a hardened JSON system prompt when response_format
+          // is present — this satisfies Snowflake Cortex's requirement that messages
+          // contain the word "json" when response_format is set (OpenAI models), and
+          // provides a structural-output fallback (non-OpenAI models).
+          // For non-OpenAI models: also strip response_format since Cortex rejects it
+          // for Claude/Llama/Mistral. OpenAI models support it natively so we keep it.
+          if ("response_format" in body) {
+            if (isOpenAIModel) {
+              const injected = injectJsonPromptFromResponseFormat(body);
+              if (injected) console.log(`[frostclaw-proxy] injected JSON system prompt for OpenAI model, response_format type=${injected} kept`);
+            } else {
+              const stripped = stripResponseFormatAndInjectPrompt(body);
+              if (stripped) console.log(`[frostclaw-proxy] stripped response_format type=${stripped} and injected JSON system prompt`);
+            }
           }
           forwardBody = JSON.stringify(body);
         }
@@ -867,12 +895,17 @@ export function createProxyServer(config) {
             body.max_completion_tokens = body.max_tokens;
             delete body.max_tokens;
           }
-          // Strip response_format for non-OpenAI models — Cortex rejects it for Claude/Llama/Mistral.
-          // OpenAI models (openai-gpt-4.1) support it natively, so pass it through for those.
-          // When stripping, inject a strong system prompt so the model still returns valid JSON.
-          if ("response_format" in body && !isOpenAIModel) {
-            const stripped = stripResponseFormatAndInjectPrompt(body);
-            console.log(`[frostclaw-proxy] stripped response_format (v1 alias) type=${stripped} and injected JSON system prompt`);
+          // For all models: inject hardened JSON system prompt when response_format present.
+          // For non-OpenAI models: also strip the field (Cortex rejects it for Claude/Llama/Mistral).
+          // OpenAI models support response_format natively so we keep it.
+          if ("response_format" in body) {
+            if (isOpenAIModel) {
+              const injected = injectJsonPromptFromResponseFormat(body);
+              if (injected) console.log(`[frostclaw-proxy] injected JSON system prompt for OpenAI model (v1 alias), response_format type=${injected} kept`);
+            } else {
+              const stripped = stripResponseFormatAndInjectPrompt(body);
+              if (stripped) console.log(`[frostclaw-proxy] stripped response_format (v1 alias) type=${stripped} and injected JSON system prompt`);
+            }
           }
           forwardBody = JSON.stringify(body);
         }

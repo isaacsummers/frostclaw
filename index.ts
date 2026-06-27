@@ -271,6 +271,7 @@ import {
   fixTrailingAssistant,
   fixEmptyTextBlocks,
   stripResponseFormat,
+  peekResponseFormat,
   injectJsonSystemPrompt,
   levelBudget,
   levelEffort,

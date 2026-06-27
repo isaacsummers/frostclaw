@@ -253,18 +253,34 @@ export function isClaudeModel(modelId: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
+ * Extract JSON schema info from response_format without deleting the field.
+ * Returns null when the field is absent or type is not json_object/json_schema.
+ */
+export function peekResponseFormat(
+  payload: Record<string, unknown>,
+): { type: string; schema?: unknown } | null {
+  if (!("response_format" in payload)) return null;
+  const rf = payload.response_format as Record<string, unknown> | undefined;
+  const type = typeof rf?.type === "string" ? rf.type : "json_object";
+  if (type !== "json_object" && type !== "json_schema") return null;
+  const schema =
+    type === "json_schema"
+      ? (rf?.json_schema as Record<string, unknown> | undefined)?.schema
+      : undefined;
+  return { type, schema };
+}
+
+/**
  * Strip the `response_format` field from an outbound OpenAI chat completions
  * payload before forwarding to Snowflake Cortex.
  *
  * Snowflake Cortex rejects both `{ type: "json_object" }` and
- * `{ type: "json_schema", ... }` with HTTP 400. When stripping json_schema,
- * the schema definition is returned so the caller can embed it in a prompt.
+ * `{ type: "json_schema", ... }` with HTTP 400 for non-OpenAI models.
+ * OpenAI models support response_format natively on Cortex's completions
+ * endpoint — use peekResponseFormat + injectJsonSystemPrompt for those
+ * instead (keep the field, only inject the prompt).
  *
- * Returns `{ type, schema }` where `type` is the stripped format type
- * ("json_object", "json_schema", "text", etc.) and `schema` is the
- * `json_schema.schema` object when type is "json_schema" (else undefined).
- * Returns `null` when the field was absent.
- *
+ * Returns `{ type, schema }` or `null` when the field was absent.
  * Mutates payload in place.
  */
 export function stripResponseFormat(
