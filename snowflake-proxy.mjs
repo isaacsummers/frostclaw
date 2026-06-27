@@ -654,10 +654,43 @@ export function createProxyServer(config) {
         JSON.stringify({
           status: "ok",
           provider: "snowflake-cortex",
-          routes: ["embeddings", "v1/chat/completions", "api/v2/cortex/v1/messages", "api/v2/cortex/v1/chat/completions", "api/v2/cortex/inference:embed"],
+          routes: ["embeddings", "v1/chat/completions", "v1/models", "api/v2/cortex/v1/messages", "api/v2/cortex/v1/chat/completions", "api/v2/cortex/inference:embed"],
           embedModels: [...SUPPORTED_EMBED_MODELS],
         }),
       );
+      return;
+    }
+
+    // ── GET /v1/models ────────────────────────────────────────────────────
+    // Returns all Snowflake Cortex models in OpenAI list-models format so
+    // clients that call GET /v1/models (e.g. FalkorDB text-to-cypher) get
+    // the full model catalog instead of proxying to Snowflake's endpoint
+    // (which only returns models with provider-specific availability).
+    if (req.method === "GET" && (req.url === "/v1/models" || req.url === "/models")) {
+      const now = Math.floor(Date.now() / 1000);
+      const models = [
+        // Claude models
+        "claude-fable-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
+        "claude-opus-4-5", "claude-sonnet-4-6", "claude-4-sonnet", "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+        // OpenAI models
+        "openai-gpt-5.4", "openai-gpt-5.2", "openai-gpt-5.1", "openai-gpt-5",
+        "openai-gpt-5-mini", "openai-gpt-5-nano", "openai-gpt-4.1",
+        // Open-source models
+        "deepseek-r1", "llama4-maverick", "llama3.1-405b", "llama3.1-70b",
+        "llama3.1-8b", "llama3.3-70b", "mistral-large", "mistral-large2",
+        "mistral-7b", "snowflake-llama-3.3-70b",
+      ];
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        object: "list",
+        data: models.map((id) => ({
+          id,
+          object: "model",
+          created: now,
+          owned_by: "snowflake-cortex",
+        })),
+      }));
       return;
     }
 
