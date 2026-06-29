@@ -363,7 +363,7 @@ describe("POST /api/v2/cortex/v1/chat/completions", () => {
     expect(res.status).toBe(200);
     expect(upstreamBody["max_tokens"]).toBeUndefined();
     expect(upstreamBody["max_completion_tokens"]).toBe(100);
-    expect(upstreamBody["model"]).toBe("gpt-5-mini");
+    expect(upstreamBody["model"]).toBe("openai-gpt-5-mini");
   });
 
   test("streaming passthrough — content-type: text/event-stream", async () => {
