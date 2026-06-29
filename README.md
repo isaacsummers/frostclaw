@@ -85,7 +85,8 @@ See [Snowflake embed API docs](https://docs.snowflake.com/en/user-guide/snowflak
 | `SNOWFLAKE_CORTEX_API_KEY` | Yes | Primary auth token (Snowflake PAT or API key) |
 | `SNOWFLAKE_BASE_URL` | Yes | Account URL, e.g. `https://my-account.snowflakecomputing.com` |
 | `SNOWFLAKE_PAT` | No | Fallback for `SNOWFLAKE_CORTEX_API_KEY` |
-| `SNOWFLAKE_CORTEX_PROXY_PORT` | No | Unified proxy port (default: `18790`) |
+| `SNOWFLAKE_PROXY_BASE_URL` | No | Override proxy URL (e.g. Docker sidecar). When absent, the plugin auto-starts its built-in proxy on `SNOWFLAKE_CORTEX_PROXY_PORT` |
+| `SNOWFLAKE_CORTEX_PROXY_PORT` | No | Built-in proxy port when auto-started (default: `18790`) |
 
 ### CLI
 

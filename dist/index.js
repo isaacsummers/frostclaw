@@ -523,6 +523,47 @@ function getApiKey() {
 function getBaseURL() {
   return process.env.SNOWFLAKE_PROXY_BASE_URL ?? process.env.SNOWFLAKE_BASE_URL ?? "";
 }
+var _proxyServer = null;
+var _proxyStarted = false;
+async function ensureProxyRunning() {
+  if (process.env.SNOWFLAKE_PROXY_BASE_URL)
+    return;
+  if (_proxyStarted)
+    return;
+  const baseUrl = (process.env.SNOWFLAKE_BASE_URL ?? "").replace(/\/$/, "");
+  const pat = process.env.SNOWFLAKE_CORTEX_API_KEY ?? process.env.SNOWFLAKE_PAT ?? "";
+  const port = parseInt(process.env.SNOWFLAKE_CORTEX_PROXY_PORT ?? "18790", 10);
+  if (!baseUrl || !pat) {
+    return;
+  }
+  try {
+    const proxyUrl = new URL("../snowflake-proxy.mjs", import.meta.url).href;
+    const { createProxyServer } = await import(proxyUrl);
+    const coalesceMs = parseInt(process.env.EMBED_COALESCE_MS ?? "50", 10);
+    const maxBatchTexts = parseInt(process.env.EMBED_MAX_BATCH_TEXTS ?? "64", 10);
+    const instance = createProxyServer({ baseUrl, pat, port, coalesceMs, maxBatchTexts });
+    await new Promise((resolve, reject) => {
+      instance.server.listen(port, "127.0.0.1", () => resolve());
+      instance.server.once("error", (err) => {
+        if (err.code === "EADDRINUSE") {
+          resolve();
+        } else {
+          reject(err);
+        }
+      });
+    });
+    if (instance.server.listening) {
+      _proxyServer = instance;
+      _pluginLogger?.info(`[frostclaw] built-in proxy started on http://127.0.0.1:${port}`);
+    } else {
+      _pluginLogger?.info(`[frostclaw] built-in proxy: port ${port} already in use, reusing existing proxy`);
+    }
+    process.env.SNOWFLAKE_PROXY_BASE_URL = `http://127.0.0.1:${port}`;
+    _proxyStarted = true;
+  } catch (err) {
+    _pluginLogger?.warn(`[frostclaw] built-in proxy failed to start: ${err}. Falling back to direct Snowflake connection.`);
+  }
+}
 var _pluginLogger = null;
 var LOG_LEVEL_ORDER = {
   trace: 0,
@@ -660,11 +701,12 @@ var snowflakeCortexEmbeddingAdapter = {
 var frostclaw_default = definePluginEntry({
   id: "snowflake-cortex",
   name: "Snowflake Cortex",
-  description: "Snowflake Cortex AI — routes Claude models to Anthropic Messages API " + "and all other models to OpenAI-compatible Chat Completions, both " + "behind PAT authentication.",
+  description: "Snowflake Cortex AI — routes Claude models to Anthropic Messages API " + "and all other models to OpenAI-compatible Chat Completions, both behind PAT authentication.",
   register(api) {
-    try {
+    (async () => {
       setPluginLogger(api.logger, api.config);
       log("plugin registered");
+      await ensureProxyRunning();
       const FETCH_INTERCEPT_MARKER = Symbol.for("frostclaw.fetchIntercepted.v2");
       if (!globalThis[FETCH_INTERCEPT_MARKER]) {
         globalThis[FETCH_INTERCEPT_MARKER] = true;
@@ -1335,13 +1377,13 @@ var frostclaw_default = definePluginEntry({
           return null;
         }
       });
-    } catch (err) {
+    })().catch((err) => {
       logError("register ERROR", {
         error: String(err),
         stack: err instanceof Error ? err.stack : undefined
       });
       throw err;
-    }
+    });
   }
 });
 export {

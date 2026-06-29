@@ -63,6 +63,91 @@ function getBaseURL(): string {
 }
 
 // ---------------------------------------------------------------------------
+// Built-in proxy auto-start
+//
+// When SNOWFLAKE_PROXY_BASE_URL is not set, the plugin starts snowflake-proxy.mjs
+// on the default port and sets SNOWFLAKE_PROXY_BASE_URL in process.env so that
+// getBaseURL() and the fetch interceptor pick it up automatically.
+//
+// This means only SNOWFLAKE_BASE_URL is required in the environment.
+// SNOWFLAKE_PROXY_BASE_URL remains accepted as an explicit override — e.g. for
+// Docker/engraph where the proxy runs as a separate container.
+//
+// The proxy is started at most once per process (module-level guard) so
+// gateway hot-reloads don't bind a second instance on the same port.
+// ---------------------------------------------------------------------------
+
+let _proxyServer: { close(): Promise<void> } | null = null;
+let _proxyStarted = false;
+
+async function ensureProxyRunning(): Promise<void> {
+  // Explicit override — use it, don't start our own.
+  if (process.env.SNOWFLAKE_PROXY_BASE_URL) return;
+
+  // Already started this process — env var was set last time, still valid.
+  if (_proxyStarted) return;
+
+  const baseUrl = (process.env.SNOWFLAKE_BASE_URL ?? "").replace(/\/$/, "");
+  const pat = process.env.SNOWFLAKE_CORTEX_API_KEY ?? process.env.SNOWFLAKE_PAT ?? "";
+  const port = parseInt(process.env.SNOWFLAKE_CORTEX_PROXY_PORT ?? "18790", 10);
+
+  if (!baseUrl || !pat) {
+    // Can't start proxy without credentials — plugin will attempt direct connection.
+    return;
+  }
+
+  try {
+    // Dynamic import keeps bun's bundler from inlining snowflake-proxy.mjs.
+    // The proxy uses process.getBuiltinModule("module") to load undici at
+    // runtime — static bundling would break that. import() is left as-is by
+    // bun when the specifier is a runtime expression.
+    //
+    // Resolve relative to this file's location so it works both from the
+    // source tree (index.ts → ../snowflake-proxy.mjs) and from the installed
+    // dist (dist/index.js → ../snowflake-proxy.mjs).
+    const proxyUrl = new URL("../snowflake-proxy.mjs", import.meta.url).href;
+    const { createProxyServer } = await import(proxyUrl) as {
+      createProxyServer: (cfg: {
+        baseUrl: string;
+        pat: string;
+        port: number;
+        coalesceMs?: number;
+        maxBatchTexts?: number;
+      }) => { server: import("node:http").Server; close(): Promise<void> };
+    };
+
+    const coalesceMs = parseInt(process.env.EMBED_COALESCE_MS ?? "50", 10);
+    const maxBatchTexts = parseInt(process.env.EMBED_MAX_BATCH_TEXTS ?? "64", 10);
+
+    const instance = createProxyServer({ baseUrl, pat, port, coalesceMs, maxBatchTexts });
+    await new Promise<void>((resolve, reject) => {
+      instance.server.listen(port, "127.0.0.1", () => resolve());
+      instance.server.once("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EADDRINUSE") {
+          // Another proxy already listening — treat as success, use it.
+          resolve();
+        } else {
+          reject(err);
+        }
+      });
+    });
+
+    // Only hold a reference if we successfully bound the port ourselves.
+    if (instance.server.listening) {
+      _proxyServer = instance;
+      _pluginLogger?.info(`[frostclaw] built-in proxy started on http://127.0.0.1:${port}`);
+    } else {
+      _pluginLogger?.info(`[frostclaw] built-in proxy: port ${port} already in use, reusing existing proxy`);
+    }
+
+    process.env.SNOWFLAKE_PROXY_BASE_URL = `http://127.0.0.1:${port}`;
+    _proxyStarted = true;
+  } catch (err) {
+    _pluginLogger?.warn(`[frostclaw] built-in proxy failed to start: ${err}. Falling back to direct Snowflake connection.`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Structured debug logger — writes to stderr, which OpenClaw captures into
 // its plugin log. Kept dependency-free and side-effect-only.
 // ---------------------------------------------------------------------------
@@ -407,12 +492,17 @@ export default definePluginEntry({
     "behind PAT authentication.",
 
   register(api) {
-    try {
+    (async () => {
       // Wire in the OpenClaw-scoped logger immediately so all subsequent
       // log calls route through it and respect openclaw.json logging.level
       // and logging.consoleLevel.
       setPluginLogger(api.logger, api.config);
       log("plugin registered");
+
+      // Auto-start the built-in proxy when no external proxy URL is configured.
+      // Must run before the fetch interceptor and catalog so getBaseURL() returns
+      // the proxy URL for all subsequent calls.
+      await ensureProxyRunning();
 
       // Install fetch interceptor to transparently retry Snowflake empty-200
       // SSE responses and configure long-lived streaming connections.
@@ -1445,12 +1535,12 @@ export default definePluginEntry({
         return null;
       },
     });
-    } catch (err) {
+    })().catch((err) => {
       logError("register ERROR", {
         error: String(err),
         stack: err instanceof Error ? err.stack : undefined,
       });
       throw err;
-    }
+    });
   },
 });
