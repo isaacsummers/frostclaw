@@ -69,16 +69,10 @@ function stripEagerInputStreaming(payload) {
   for (const tool of tools) {
     if (!tool || typeof tool !== "object")
       continue;
-    const custom = tool.custom;
-    if (!custom || typeof custom !== "object")
+    const t = tool;
+    if (!("eager_input_streaming" in t))
       continue;
-    const customRec = custom;
-    if (!("eager_input_streaming" in customRec))
-      continue;
-    delete customRec.eager_input_streaming;
-    if (Object.keys(customRec).length === 0) {
-      delete tool.custom;
-    }
+    delete t.eager_input_streaming;
   }
 }
 function levelBudget(thinkingLevel) {

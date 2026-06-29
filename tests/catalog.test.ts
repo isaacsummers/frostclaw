@@ -162,40 +162,38 @@ function makePayload(withFlag: boolean) {
         name: "test_tool",
         description: "A test tool",
         input_schema: { type: "object", properties: {} },
-        custom: {
-          ...(withFlag ? { eager_input_streaming: true } : {}),
-          other_field: "keep_me",
-        },
+        ...(withFlag ? { eager_input_streaming: true } : {}),
+        other_field: "keep_me",
       },
     ],
   };
 }
 
 describe("applyEagerInputStreamingStrip — Claude strips, non-Claude unchanged", () => {
-  test("Claude Sonnet: strips eager_input_streaming from tool custom", () => {
+  test("Claude Sonnet: strips eager_input_streaming from tool top-level", () => {
     const payload = makePayload(true);
     const result = applyEagerInputStreamingStrip("claude-sonnet-4-6", payload) as typeof payload;
     expect(
-      (result.tools[0].custom as Record<string, unknown>).eager_input_streaming,
+      (result.tools[0] as Record<string, unknown>).eager_input_streaming,
     ).toBeUndefined();
     expect(
-      (result.tools[0].custom as Record<string, unknown>).other_field,
+      (result.tools[0] as Record<string, unknown>).other_field,
     ).toBe("keep_me");
   });
 
-  test("Claude Haiku: strips eager_input_streaming from tool custom", () => {
+  test("Claude Haiku: strips eager_input_streaming from tool top-level", () => {
     const payload = makePayload(true);
     const result = applyEagerInputStreamingStrip("claude-haiku-4-5", payload) as typeof payload;
     expect(
-      (result.tools[0].custom as Record<string, unknown>).eager_input_streaming,
+      (result.tools[0] as Record<string, unknown>).eager_input_streaming,
     ).toBeUndefined();
   });
 
-  test("Claude Opus: strips eager_input_streaming from tool custom", () => {
+  test("Claude Opus: strips eager_input_streaming from tool top-level", () => {
     const payload = makePayload(true);
     const result = applyEagerInputStreamingStrip("claude-opus-4-7", payload) as typeof payload;
     expect(
-      (result.tools[0].custom as Record<string, unknown>).eager_input_streaming,
+      (result.tools[0] as Record<string, unknown>).eager_input_streaming,
     ).toBeUndefined();
   });
 
@@ -228,16 +226,16 @@ describe("applyEagerInputStreamingStrip — Claude strips, non-Claude unchanged"
   test("multiple tools: only the one with the field is touched", () => {
     const payload = {
       tools: [
-        { custom: { eager_input_streaming: true, keep: 1 } },
-        { custom: { keep: 2 } },
-        { name: "no_custom" },
+        { name: "a", eager_input_streaming: true, keep: 1 },
+        { name: "b", keep: 2 },
+        { name: "c" },
       ],
     };
     const result = applyEagerInputStreamingStrip("claude-sonnet-4-6", payload) as typeof payload;
     expect(
-      (result.tools[0].custom as Record<string, unknown>).eager_input_streaming,
+      (result.tools[0] as Record<string, unknown>).eager_input_streaming,
     ).toBeUndefined();
-    expect((result.tools[0].custom as Record<string, unknown>).keep).toBe(1);
-    expect((result.tools[1].custom as Record<string, unknown>).keep).toBe(2);
+    expect((result.tools[0] as Record<string, unknown>).keep).toBe(1);
+    expect((result.tools[1] as Record<string, unknown>).keep).toBe(2);
   });
 });

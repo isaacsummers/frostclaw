@@ -62,16 +62,10 @@ function stripEagerInputStreaming(payload) {
   for (const tool of tools) {
     if (!tool || typeof tool !== "object")
       continue;
-    const custom = tool.custom;
-    if (!custom || typeof custom !== "object")
+    const t = tool;
+    if (!("eager_input_streaming" in t))
       continue;
-    const customRec = custom;
-    if (!("eager_input_streaming" in customRec))
-      continue;
-    delete customRec.eager_input_streaming;
-    if (Object.keys(customRec).length === 0) {
-      delete tool.custom;
-    }
+    delete t.eager_input_streaming;
   }
 }
 function levelBudget(thinkingLevel) {
@@ -142,10 +136,60 @@ function clampMaxTokens(payload) {
 function isClaudeModel(modelId) {
   return modelId.toLowerCase().startsWith("claude");
 }
+function peekResponseFormat(payload) {
+  if (!("response_format" in payload))
+    return null;
+  const rf = payload.response_format;
+  const type = typeof rf?.type === "string" ? rf.type : "json_object";
+  if (type !== "json_object" && type !== "json_schema")
+    return null;
+  const schema = type === "json_schema" ? rf?.json_schema?.schema : undefined;
+  return { type, schema };
+}
 function stripResponseFormat(payload) {
-  if ("response_format" in payload) {
-    delete payload.response_format;
+  if (!("response_format" in payload))
+    return null;
+  const rf = payload.response_format;
+  const type = typeof rf?.type === "string" ? rf.type : "json_object";
+  const schema = type === "json_schema" ? rf?.json_schema?.schema : undefined;
+  delete payload.response_format;
+  return { type, schema };
+}
+var JSON_OBJECT_SYSTEM_PROMPT = "You must respond with ONLY valid JSON. " + "Do not include any text before or after the JSON object. " + "Do not wrap the response in markdown code fences or backticks. " + "Do not add explanations, comments, or any prose. " + "Your entire response must be a single, complete, parseable JSON object.";
+function buildJsonPrompt(type, schema) {
+  if (type === "json_schema" && schema !== undefined) {
+    return `You must respond with ONLY valid JSON conforming exactly to this schema:
+` + JSON.stringify(schema, null, 2) + `
+
+` + "Do not include any text before or after the JSON. " + "Do not wrap in markdown code fences or backticks. " + "No explanations, comments, or prose. " + "Your entire response must be a single, complete, parseable JSON object matching the schema above.";
   }
+  return JSON_OBJECT_SYSTEM_PROMPT;
+}
+function injectJsonSystemPrompt(messages, stripped) {
+  if (stripped?.type !== "json_object" && stripped?.type !== "json_schema") {
+    return messages;
+  }
+  const prefix = buildJsonPrompt(stripped.type, stripped.schema);
+  const sysIdx = messages.findIndex((m) => m && typeof m === "object" && m.role === "system");
+  if (sysIdx === -1) {
+    return [{ role: "system", content: prefix }, ...messages];
+  }
+  const result = [...messages];
+  const sys = { ...result[sysIdx] };
+  if (typeof sys.content === "string") {
+    sys.content = `${prefix}
+
+${sys.content}`;
+  } else if (Array.isArray(sys.content)) {
+    sys.content = [
+      { type: "text", text: prefix },
+      ...sys.content
+    ];
+  } else {
+    sys.content = prefix;
+  }
+  result[sysIdx] = sys;
+  return result;
 }
 function stripDocumentBlocks(messages) {
   let needsFix = false;
@@ -197,10 +241,12 @@ export {
   stripResponseFormat,
   stripEagerInputStreaming,
   stripDocumentBlocks,
+  peekResponseFormat,
   normalizeThinkingBudget,
   levelEffort,
   levelBudget,
   isClaudeModel,
+  injectJsonSystemPrompt,
   fixTrailingAssistant,
   fixEmptyTextBlocks,
   clampMaxTokens

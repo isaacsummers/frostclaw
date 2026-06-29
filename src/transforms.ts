@@ -78,24 +78,21 @@ export function fixEmptyTextBlocks(messages: unknown[]): unknown[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Strip `eager_input_streaming` from every tool's `custom` object on an
- * outbound Anthropic Messages payload.
+ * Strip `eager_input_streaming` from every tool on an outbound Anthropic
+ * Messages payload.
  *
- * Snowflake Cortex's strict request validator (Haiku 4.5 and other tiers)
- * rejects the field with:
- *   400 invalid request parameters: tools.0.custom.eager_input_streaming:
+ * `eager_input_streaming` is a top-level tool field (not inside `custom`)
+ * supported on the direct Anthropic API, Bedrock, Vertex, and Foundry —
+ * but NOT on Snowflake Cortex. Cortex\'s strict request validator rejects
+ * any field it does not recognise with:
+ *   400 invalid request parameters: tools.0.eager_input_streaming:
  *       Extra inputs are not permitted
  *
  * The catalog already sets `supportsEagerToolInputStreaming: false`, which
- * tells pi-ai's Anthropic provider not to add the field. This function is a
- * defensive belt-and-suspenders strip on the final outbound payload — it
- * survives SDK upgrades that might add the field back, plugin
- * misconfiguration, or any future code path in pi-ai that re-introduces it.
- *
- * Scope: only `eager_input_streaming` is removed from each tool's `custom`
- * object. Other `custom` fields (name, description, input_schema, etc.) are
- * preserved. If `custom` is left empty after stripping, the key itself is
- * removed so we never send `"custom": {}`.
+ * tells OpenClaw\'s Anthropic provider not to add the field. This function
+ * is a defensive belt-and-suspenders strip on the final outbound payload —
+ * it survives SDK upgrades that might add the field back, plugin
+ * misconfiguration, or any future code path that re-introduces it.
  *
  * Mutates payload in place. Fast path: returns immediately when no tool
  * carries the field (the steady-state common case). No allocations on the
@@ -109,17 +106,9 @@ export function stripEagerInputStreaming(
 
   for (const tool of tools) {
     if (!tool || typeof tool !== "object") continue;
-    const custom = (tool as Record<string, unknown>).custom;
-    if (!custom || typeof custom !== "object") continue;
-    const customRec = custom as Record<string, unknown>;
-    if (!("eager_input_streaming" in customRec)) continue;
-
-    delete customRec.eager_input_streaming;
-    // Drop the now-empty container rather than emit `"custom": {}`,
-    // which Cortex's strict validator would also reject as extra input.
-    if (Object.keys(customRec).length === 0) {
-      delete (tool as Record<string, unknown>).custom;
-    }
+    const t = tool as Record<string, unknown>;
+    if (!("eager_input_streaming" in t)) continue;
+    delete t.eager_input_streaming;
   }
 }
 

@@ -259,7 +259,7 @@ describe("POST /v1/messages", () => {
     expect(capturedHeaders["x-api-key"]).toBeUndefined();
   });
 
-  test("strips eager_input_streaming from tools[].custom; preserves other custom fields", async () => {
+  test("strips eager_input_streaming from tools[] top-level; preserves other fields", async () => {
     let upstreamBody: Record<string, unknown> = {};
     mock.setHandler(async (req, res) => {
       const chunks: Buffer[] = [];
@@ -277,17 +277,14 @@ describe("POST /v1/messages", () => {
         messages: [{ role: "user", content: "hi" }],
         tools: [
           {
-            type: "custom",
-            custom: {
-              name: "lookup",
-              description: "do a lookup",
-              input_schema: { type: "object" },
-              eager_input_streaming: true,
-            },
+            name: "lookup",
+            description: "do a lookup",
+            input_schema: { type: "object" },
+            eager_input_streaming: true,
           },
           {
-            type: "custom",
-            custom: { eager_input_streaming: true },
+            name: "other",
+            input_schema: { type: "object" },
           },
         ],
       }),
@@ -296,14 +293,14 @@ describe("POST /v1/messages", () => {
 
     const tools = upstreamBody.tools as Array<Record<string, unknown>>;
     expect(tools).toHaveLength(2);
-    expect(tools[0].custom).toEqual({
+    // eager_input_streaming stripped from tool[0], other fields preserved
+    expect(tools[0]).toEqual({
       name: "lookup",
       description: "do a lookup",
       input_schema: { type: "object" },
     });
-    // Tool whose only custom field was the offending key drops the
-    // empty `custom` object entirely.
-    expect(tools[1]).toEqual({ type: "custom" });
+    // tool[1] had no eager_input_streaming — untouched
+    expect(tools[1]).toEqual({ name: "other", input_schema: { type: "object" } });
   });
 
   test("upstream 4xx on streaming request — buffers error body and forwards as JSON", async () => {

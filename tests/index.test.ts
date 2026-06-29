@@ -339,58 +339,56 @@ describe("stripEagerInputStreaming", () => {
     expect(payload).toEqual({ messages: [] });
   });
 
-  test("tools without custom: no-op", () => {
-    const payload: Record<string, unknown> = {
-      tools: [{ type: "bash_20250124", name: "bash" }],
-    };
+  test("tools without eager_input_streaming: no-op (same reference)", () => {
+    const tool = { name: "bash", description: "run bash", input_schema: { type: "object" } };
+    const payload: Record<string, unknown> = { tools: [tool] };
     stripEagerInputStreaming(payload);
-    expect(payload.tools).toEqual([{ type: "bash_20250124", name: "bash" }]);
+    expect((payload.tools as unknown[])[0]).toBe(tool);
+    expect(tool).toEqual({ name: "bash", description: "run bash", input_schema: { type: "object" } });
   });
 
-  test("tool with eager_input_streaming alongside other custom fields: field removed, custom kept", () => {
+  test("tool with eager_input_streaming alongside other fields: field removed, others kept", () => {
     const payload: Record<string, unknown> = {
       tools: [
         {
-          type: "custom",
-          custom: {
-            name: "lookup",
-            description: "Look something up",
-            input_schema: { type: "object" },
-            eager_input_streaming: true,
-          },
+          name: "lookup",
+          description: "Look something up",
+          input_schema: { type: "object" },
+          eager_input_streaming: true,
         },
       ],
     };
     stripEagerInputStreaming(payload);
-    const tool = (payload.tools as Array<{ custom: Record<string, unknown> }>)[0];
-    expect(tool.custom).toEqual({
-      name: "lookup",
-      description: "Look something up",
-      input_schema: { type: "object" },
-    });
+    expect(payload.tools).toEqual([
+      {
+        name: "lookup",
+        description: "Look something up",
+        input_schema: { type: "object" },
+      },
+    ]);
   });
 
-  test("tool with only eager_input_streaming in custom: custom key dropped entirely", () => {
+  test("tool with only eager_input_streaming: field removed, tool otherwise unchanged", () => {
     const payload: Record<string, unknown> = {
-      tools: [{ type: "custom", custom: { eager_input_streaming: true } }],
+      tools: [{ name: "x", eager_input_streaming: true }],
     };
     stripEagerInputStreaming(payload);
-    expect(payload.tools).toEqual([{ type: "custom" }]);
+    expect(payload.tools).toEqual([{ name: "x" }]);
   });
 
   test("multiple tools: only ones carrying the field are touched", () => {
     const payload: Record<string, unknown> = {
       tools: [
-        { type: "custom", custom: { name: "a", eager_input_streaming: true } },
-        { type: "custom", custom: { name: "b" } },
-        { type: "custom", custom: { name: "c", eager_input_streaming: false } },
+        { name: "a", eager_input_streaming: true },
+        { name: "b" },
+        { name: "c", eager_input_streaming: false },
       ],
     };
     stripEagerInputStreaming(payload);
     expect(payload.tools).toEqual([
-      { type: "custom", custom: { name: "a" } },
-      { type: "custom", custom: { name: "b" } },
-      { type: "custom", custom: { name: "c" } },
+      { name: "a" },
+      { name: "b" },
+      { name: "c" },
     ]);
   });
 

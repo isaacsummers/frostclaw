@@ -833,9 +833,11 @@ export function createProxyServer(config) {
         // pipeline.
         //
         // (a) eager_input_streaming scrub: Cortex's strict validator rejects
-        //     tools[].custom.eager_input_streaming with
+        //     tools[].eager_input_streaming (a top-level tool field, NOT inside
+        //     custom) with:
         //       400 ...eager_input_streaming: Extra inputs are not permitted
-        //     Drop it; if `custom` becomes empty, drop the key too.
+        //     Supported on direct Anthropic API, Bedrock, Vertex, Foundry —
+        //     not Snowflake. Strip it unconditionally on this endpoint.
         // (b) tool_use/tool_result pairing repair: Cortex requires every
         //     assistant `tool_use` block to be matched by a `tool_result` in the
         //     immediately-following user turn (400 "Each 'toolUse' block must be
@@ -847,11 +849,8 @@ export function createProxyServer(config) {
           if (Array.isArray(body.tools)) {
             for (const tool of body.tools) {
               if (!tool || typeof tool !== "object") continue;
-              const custom = tool.custom;
-              if (!custom || typeof custom !== "object") continue;
-              if (!("eager_input_streaming" in custom)) continue;
-              delete custom.eager_input_streaming;
-              if (Object.keys(custom).length === 0) delete tool.custom;
+              if (!("eager_input_streaming" in tool)) continue;
+              delete tool.eager_input_streaming;
               mutated = true;
             }
           }
