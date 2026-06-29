@@ -30,6 +30,8 @@
  *   SNOWFLAKE_CORTEX_PROXY_PORT    - Port to listen on (default: 18790)
  *   EMBED_COALESCE_MS              - Batch window in ms (default: 50)
  *   EMBED_MAX_BATCH_TEXTS          - Max texts per batch (default: 64)
+ *   PROXY_MAX_RETRIES              - Max retries on rate-limit / transient errors (default: 3)
+ *   PROXY_RETRY_BASE_DELAY         - Base delay in seconds for exponential backoff (default: 1.0)
  */
 
 import { createServer } from "node:http";
@@ -97,6 +99,55 @@ const SUPPORTED_EMBED_MODELS = new Set([
   "voyage-multimodal-3",
   "voyage-multilingual-2",
 ]);
+
+// ---------------------------------------------------------------------------
+// Retry config — reads from env at call time so changes take effect without
+// restarting the proxy.
+// ---------------------------------------------------------------------------
+
+function getMaxRetries() {
+  return Math.max(0, parseInt(process.env.PROXY_MAX_RETRIES ?? "3", 10) || 0);
+}
+
+function getRetryBaseDelayMs() {
+  return Math.max(0, parseFloat(process.env.PROXY_RETRY_BASE_DELAY ?? "1.0") * 1000);
+}
+
+/**
+ * Returns the wait time in ms before the next retry attempt.
+ * Prefers the Retry-After response header (in seconds) when present;
+ * falls back to exponential backoff: baseDelayMs * 2^attempt.
+ *
+ * @param {Headers} headers - Response headers from the upstream response
+ * @param {number}  attempt - Zero-based attempt index (0 = first retry)
+ * @param {number}  baseDelayMs - Base delay in ms
+ * @returns {number} Wait time in ms
+ */
+function getRetryWaitMs(headers, attempt, baseDelayMs) {
+  const retryAfter = headers.get("retry-after");
+  if (retryAfter !== null && retryAfter !== undefined) {
+    const seconds = parseFloat(retryAfter);
+    if (!Number.isNaN(seconds) && seconds >= 0) {
+      return seconds * 1000;
+    }
+  }
+  return baseDelayMs * Math.pow(2, attempt);
+}
+
+/**
+ * Returns true when the upstream HTTP status code is retryable.
+ * Mirrors the logic in SnowClaw's retry.py and the plugin's fetch interceptor.
+ *
+ * @param {number} status
+ * @param {string} body - Error response body text (used to detect throttled 400s)
+ * @returns {boolean}
+ */
+function isRetryableStatus(status, body) {
+  if (status === 429) return true;          // rate limited
+  if (status === 503) return true;          // inference timeout
+  if (status === 400 && body.toLowerCase().includes("throttled")) return true;
+  return false;
+}
 
 // Headers to strip from client requests before forwarding (all lowercase)
 const STRIP_HEADERS = new Set([
@@ -525,28 +576,47 @@ export function createProxyServer(config) {
       if (!forwardHeaders[k]) forwardHeaders[k] = v;
     }
 
-    const _t0 = Date.now();
-    const fetchOpts = {
-      method: "POST",
-      headers: forwardHeaders,
-      body: bodyStr,
-    };
-    // Attach the long-lived undici Agent for streaming requests so Snowflake's
-    // extended thinking phases (no SSE tokens for many seconds) don't trigger
-    // a bodyTimeout disconnect on the outbound Snowflake connection.
-    if (isStreaming && _snowflakeAgent) {
-      fetchOpts.dispatcher = _snowflakeAgent;
-    }
-    const sfRes = await _snowflakeFetch(targetUrl, fetchOpts);
-    console.log(`[frostclaw-proxy] upstream ${targetUrl.split('/').pop()} → ${sfRes.status} (${Date.now() - _t0}ms, reqBytes=${bodyStr.length})`);
+    const maxRetries = getMaxRetries();
+    const baseDelayMs = getRetryBaseDelayMs();
+    const routeName = targetUrl.split("/").pop();
+    let sfRes = null;
+    let retryCount = 0;
 
-    // If upstream errored with 4xx/5xx on a "streaming" request, the body is
-    // a small JSON error blob, not SSE. Buffer it so we can both log the
-    // error detail and forward a properly-shaped response to the client.
-    if (isStreaming && !sfRes.ok) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const _t0 = Date.now();
+      const fetchOpts = {
+        method: "POST",
+        headers: forwardHeaders,
+        body: bodyStr,
+      };
+      // Attach the long-lived undici Agent for streaming requests so Snowflake's
+      // extended thinking phases (no SSE tokens for many seconds) don't trigger
+      // a bodyTimeout disconnect on the outbound Snowflake connection.
+      if (isStreaming && _snowflakeAgent) {
+        fetchOpts.dispatcher = _snowflakeAgent;
+      }
+      sfRes = await _snowflakeFetch(targetUrl, fetchOpts);
+      console.log(`[frostclaw-proxy] upstream ${routeName} → ${sfRes.status} (${Date.now() - _t0}ms, reqBytes=${bodyStr.length}${retryCount > 0 ? `, retry=${retryCount}` : ""})`);
+
+      if (sfRes.ok) break; // success — exit retry loop
+
+      // Buffer the error body so we can inspect it for retry eligibility
+      // (and forward it if we're not retrying).
       const errBody = await sfRes.text().catch(() => "");
+
+      if (attempt < maxRetries && isRetryableStatus(sfRes.status, errBody)) {
+        const waitMs = getRetryWaitMs(sfRes.headers, attempt, baseDelayMs);
+        console.warn(
+          `[frostclaw-proxy] retryable ${sfRes.status} from ${routeName} — waiting ${(waitMs / 1000).toFixed(1)}s before retry ${attempt + 1}/${maxRetries} (Retry-After: ${sfRes.headers.get("retry-after") ?? "none"})`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        retryCount++;
+        continue;
+      }
+
+      // Non-retryable error (or retries exhausted) — forward error to client.
       console.error(
-        `[frostclaw-proxy] upstream error ${sfRes.status} on streaming request to ${targetUrl.split('/').pop()}: ${errBody.slice(0, 1000)}`,
+        `[frostclaw-proxy] upstream error ${sfRes.status} on ${isStreaming ? "streaming" : "non-streaming"} request to ${routeName}${retryCount > 0 ? ` (after ${retryCount} retries)` : ""}: ${errBody.slice(0, 1000)}`,
       );
       const responseHeaders = { "content-type": "application/json" };
       for (const [key, value] of sfRes.headers.entries()) {
@@ -560,6 +630,7 @@ export function createProxyServer(config) {
           responseHeaders[lower] = value;
         }
       }
+      if (retryCount > 0) responseHeaders["x-retry-count"] = String(retryCount);
       responseHeaders["content-length"] = Buffer.byteLength(errBody).toString();
       res.writeHead(sfRes.status, responseHeaders);
       res.end(errBody);
@@ -583,6 +654,7 @@ export function createProxyServer(config) {
           responseHeaders[lower] = value;
         }
       }
+      if (retryCount > 0) responseHeaders["x-retry-count"] = String(retryCount);
       res.writeHead(sfRes.status, responseHeaders);
 
       if (!sfRes.body) {
@@ -638,6 +710,7 @@ export function createProxyServer(config) {
       }
       responseHeaders["content-length"] =
         Buffer.byteLength(responseBody).toString();
+      if (retryCount > 0) responseHeaders["x-retry-count"] = String(retryCount);
       res.writeHead(sfRes.status, responseHeaders);
       res.end(responseBody);
     }
