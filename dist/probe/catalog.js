@@ -279,25 +279,25 @@ var OPEN_SOURCE_MODELS = [
   { id: "mistral-7b", name: "Mistral 7B", reasoning: false, contextWindow: 32000, maxTokens: 8192, input: ["text"] },
   { id: "snowflake-llama-3.3-70b", name: "Snowflake Llama 3.3 70B", reasoning: false, contextWindow: 128000, maxTokens: 32768, input: ["text"] }
 ];
-var COST_FABLE = { input: 0.00001, output: 0.00005, cacheRead: 0.000001, cacheWrite: 0.0000125 };
-var COST_OPUS = { input: 0.000005, output: 0.000025, cacheRead: 0.0000005, cacheWrite: 0.00000625 };
-var COST_SONNET = { input: 0.000003, output: 0.000015, cacheRead: 0.0000003, cacheWrite: 0.00000375 };
-var COST_SONNET_LONG = { input: 0.000006, output: 0.00003, cacheRead: 0.0000006, cacheWrite: 0.0000075 };
-var COST_HAIKU = { input: 0.000001, output: 0.000005, cacheRead: 0.0000001, cacheWrite: 0.00000125 };
-var COST_GPT54 = { input: 0.00000275, output: 0.0000165, cacheRead: 0.00000028, cacheWrite: 0 };
-var COST_GPT52 = { input: 0.00000193, output: 0.0000154, cacheRead: 0.00000019, cacheWrite: 0 };
-var COST_GPT51 = { input: 0.00000138, output: 0.000011, cacheRead: 0.00000014, cacheWrite: 0 };
-var COST_GPT5_MINI = { input: 0.00000028, output: 0.0000022, cacheRead: 0.000000028, cacheWrite: 0 };
-var COST_GPT5_NANO = { input: 0.00000006, output: 0.00000044, cacheRead: 0.000000006, cacheWrite: 0 };
-var COST_GPT41 = { input: 0.0000022, output: 0.0000088, cacheRead: 0.00000055, cacheWrite: 0 };
-var COST_DEEPSEEK_R1 = { input: 0.00000135, output: 0.0000054, cacheRead: 0, cacheWrite: 0 };
-var COST_LLAMA_405B = { input: 0.0000024, output: 0.0000024, cacheRead: 0, cacheWrite: 0 };
-var COST_LLAMA_70B = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 };
-var COST_LLAMA_8B = { input: 0.00000022, output: 0.00000022, cacheRead: 0, cacheWrite: 0 };
-var COST_LLAMA4_MAV = { input: 0.00000024, output: 0.00000097, cacheRead: 0, cacheWrite: 0 };
-var COST_MISTRAL_LG = { input: 0.000004, output: 0.000012, cacheRead: 0, cacheWrite: 0 };
-var COST_MISTRAL_LG2 = { input: 0.000002, output: 0.000006, cacheRead: 0, cacheWrite: 0 };
-var COST_MISTRAL_7B = { input: 0.00000015, output: 0.0000002, cacheRead: 0, cacheWrite: 0 };
+var COST_FABLE = { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 };
+var COST_OPUS = { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 };
+var COST_SONNET = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 };
+var COST_SONNET_LONG = { input: 6, output: 30, cacheRead: 0.6, cacheWrite: 7.5 };
+var COST_HAIKU = { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 };
+var COST_GPT54 = { input: 2.75, output: 16.5, cacheRead: 0.275, cacheWrite: 0 };
+var COST_GPT52 = { input: 1.93, output: 15.4, cacheRead: 0.193, cacheWrite: 0 };
+var COST_GPT51 = { input: 1.38, output: 11, cacheRead: 0.138, cacheWrite: 0 };
+var COST_GPT5_MINI = { input: 0.275, output: 2.2, cacheRead: 0.028, cacheWrite: 0 };
+var COST_GPT5_NANO = { input: 0.06, output: 0.44, cacheRead: 0.006, cacheWrite: 0 };
+var COST_GPT41 = { input: 2.2, output: 8.8, cacheRead: 0.55, cacheWrite: 0 };
+var COST_DEEPSEEK_R1 = { input: 1.35, output: 5.4, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA_405B = { input: 2.4, output: 2.4, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA_70B = { input: 0.72, output: 0.72, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA_8B = { input: 0.22, output: 0.22, cacheRead: 0, cacheWrite: 0 };
+var COST_LLAMA4_MAV = { input: 0.24, output: 0.97, cacheRead: 0, cacheWrite: 0 };
+var COST_MISTRAL_LG = { input: 4, output: 12, cacheRead: 0, cacheWrite: 0 };
+var COST_MISTRAL_LG2 = { input: 2, output: 6, cacheRead: 0, cacheWrite: 0 };
+var COST_MISTRAL_7B = { input: 0.15, output: 0.2, cacheRead: 0, cacheWrite: 0 };
 function claudeCost(id) {
   if (id === "claude-fable-5")
     return COST_FABLE;

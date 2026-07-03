@@ -135,31 +135,31 @@ export const OPEN_SOURCE_MODELS: CortexModelSpec[] = [
 
 // Claude models
 // Pricing source: https://www.anthropic.com/pricing (verified 2026-06-13)
-// Per-token rates = per-MTok price / 1_000_000
-const COST_FABLE          = { input: 0.000010,   output: 0.000050,   cacheRead: 0.0000010,  cacheWrite: 0.0000125   }; // $10/$50 input/output (claude-fable-5; adaptive thinking always on)
-const COST_OPUS           = { input: 0.000005,   output: 0.000025,   cacheRead: 0.0000005,  cacheWrite: 0.00000625  }; // $5/$25 input/output, $0.50/$6.25 cache (Opus 4.5–4.8)
-const COST_SONNET         = { input: 0.000003,   output: 0.000015,   cacheRead: 0.0000003,  cacheWrite: 0.000003750 }; // $3/$15 input/output, $0.30/$3.75 cache (Sonnet 4.5–4.6)
-const COST_SONNET_LONG    = { input: 0.000006,   output: 0.000030,   cacheRead: 0.0000006,  cacheWrite: 0.0000075   }; // 2x Sonnet rates for long-context variant
-const COST_HAIKU          = { input: 0.000001,   output: 0.000005,   cacheRead: 0.0000001,  cacheWrite: 0.00000125  }; // $1/$5 input/output, $0.10/$1.25 cache (Haiku 4.5)
+// Rates are per-MTok (OpenClaw's calculateCost divides by 1e6 internally)
+const COST_FABLE          = { input: 10,    output: 50,    cacheRead: 1,    cacheWrite: 12.5   }; // $10/$50 input/output (claude-fable-5; adaptive thinking always on)
+const COST_OPUS           = { input: 5,     output: 25,    cacheRead: 0.5,  cacheWrite: 6.25   }; // $5/$25 input/output, $0.50/$6.25 cache (Opus 4.5–4.8)
+const COST_SONNET         = { input: 3,     output: 15,    cacheRead: 0.3,  cacheWrite: 3.75   }; // $3/$15 input/output, $0.30/$3.75 cache (Sonnet 4.5–4.6)
+const COST_SONNET_LONG    = { input: 6,     output: 30,    cacheRead: 0.6,  cacheWrite: 7.5    }; // 2x Sonnet rates for long-context variant
+const COST_HAIKU          = { input: 1,     output: 5,     cacheRead: 0.1,  cacheWrite: 1.25   }; // $1/$5 input/output, $0.10/$1.25 cache (Haiku 4.5)
 
 
 // OpenAI models (Azure Regional)
-const COST_GPT54          = { input: 0.00000275, output: 0.0000165,  cacheRead: 0.00000028, cacheWrite: 0 };
-const COST_GPT52          = { input: 0.00000193, output: 0.0000154,  cacheRead: 0.00000019, cacheWrite: 0 };
-const COST_GPT51          = { input: 0.00000138, output: 0.000011,   cacheRead: 0.00000014, cacheWrite: 0 };
-const COST_GPT5_MINI      = { input: 0.00000028, output: 0.0000022,  cacheRead: 0.000000028, cacheWrite: 0 };
-const COST_GPT5_NANO      = { input: 0.00000006, output: 0.00000044, cacheRead: 0.000000006, cacheWrite: 0 };
-const COST_GPT41          = { input: 0.0000022,  output: 0.0000088,  cacheRead: 0.00000055, cacheWrite: 0 };
+const COST_GPT54          = { input: 2.75,  output: 16.5,  cacheRead: 0.275, cacheWrite: 0 };
+const COST_GPT52          = { input: 1.93,  output: 15.4,  cacheRead: 0.193, cacheWrite: 0 };
+const COST_GPT51          = { input: 1.38,  output: 11,    cacheRead: 0.138, cacheWrite: 0 };
+const COST_GPT5_MINI      = { input: 0.275, output: 2.2,   cacheRead: 0.028, cacheWrite: 0 };
+const COST_GPT5_NANO      = { input: 0.06,  output: 0.44,  cacheRead: 0.006, cacheWrite: 0 };
+const COST_GPT41          = { input: 2.2,   output: 8.8,   cacheRead: 0.55,  cacheWrite: 0 };
 
 // Open-source models
-const COST_DEEPSEEK_R1    = { input: 0.00000135, output: 0.0000054,  cacheRead: 0, cacheWrite: 0 };
-const COST_LLAMA_405B     = { input: 0.0000024,  output: 0.0000024,  cacheRead: 0, cacheWrite: 0 };
-const COST_LLAMA_70B      = { input: 0.00000072, output: 0.00000072, cacheRead: 0, cacheWrite: 0 };
-const COST_LLAMA_8B       = { input: 0.00000022, output: 0.00000022, cacheRead: 0, cacheWrite: 0 };
-const COST_LLAMA4_MAV     = { input: 0.00000024, output: 0.00000097, cacheRead: 0, cacheWrite: 0 };
-const COST_MISTRAL_LG     = { input: 0.000004,   output: 0.000012,   cacheRead: 0, cacheWrite: 0 };
-const COST_MISTRAL_LG2    = { input: 0.000002,   output: 0.000006,   cacheRead: 0, cacheWrite: 0 };
-const COST_MISTRAL_7B     = { input: 0.00000015, output: 0.0000002,  cacheRead: 0, cacheWrite: 0 };
+const COST_DEEPSEEK_R1    = { input: 1.35,  output: 5.4,   cacheRead: 0, cacheWrite: 0 };
+const COST_LLAMA_405B     = { input: 2.4,   output: 2.4,   cacheRead: 0, cacheWrite: 0 };
+const COST_LLAMA_70B      = { input: 0.72,  output: 0.72,  cacheRead: 0, cacheWrite: 0 };
+const COST_LLAMA_8B       = { input: 0.22,  output: 0.22,  cacheRead: 0, cacheWrite: 0 };
+const COST_LLAMA4_MAV     = { input: 0.24,  output: 0.97,  cacheRead: 0, cacheWrite: 0 };
+const COST_MISTRAL_LG     = { input: 4,     output: 12,    cacheRead: 0, cacheWrite: 0 };
+const COST_MISTRAL_LG2    = { input: 2,     output: 6,     cacheRead: 0, cacheWrite: 0 };
+const COST_MISTRAL_7B     = { input: 0.15,  output: 0.2,   cacheRead: 0, cacheWrite: 0 };
 
 // ---------------------------------------------------------------------------
 // Builder functions
