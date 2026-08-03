@@ -146,6 +146,13 @@ function isRetryableStatus(status, body) {
   if (status === 429) return true;          // rate limited
   if (status === 503) return true;          // inference timeout
   if (status === 400 && body.toLowerCase().includes("throttled")) return true;
+  // Snowflake connection-reset errors (TCP drop mid-stream or GOAWAY).
+  // Error code 392606 = java.io.IOException: Connection reset by peer.
+  // These are transient infrastructure errors and safe to retry.
+  if (status === 500) {
+    const b = body.toLowerCase();
+    if (b.includes("392606") || b.includes("connection reset") || b.includes("goaway")) return true;
+  }
   return false;
 }
 
