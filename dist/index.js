@@ -188,6 +188,27 @@ ${sys.content}`;
   result[sysIdx] = sys;
   return result;
 }
+function historyRequiresThinkingBlocks(messages) {
+  for (const msg of messages) {
+    if (!msg || typeof msg !== "object")
+      continue;
+    const m = msg;
+    if (m.role !== "assistant")
+      continue;
+    if (!Array.isArray(m.content) || m.content.length === 0)
+      continue;
+    const firstBlock = m.content[0];
+    if (!firstBlock)
+      continue;
+    const firstType = firstBlock.type;
+    if (firstType === "thinking" || firstType === "redacted_thinking")
+      continue;
+    const hasToolUse = m.content.some((b) => b && typeof b === "object" && b.type === "tool_use");
+    if (hasToolUse)
+      return true;
+  }
+  return false;
+}
 function stripDocumentBlocks(messages) {
   let needsFix = false;
   outer:
@@ -1123,6 +1144,16 @@ var frostclaw_default = definePluginEntry({
                       record.messages = injectJsonSystemPrompt(record.messages, stripped);
                     }
                     normalizeThinkingBudget(record, thinkingLevel, isAdaptiveOnly(String(model?.id ?? "")));
+                    if (isAdaptiveOnly(String(model?.id ?? "")) && Array.isArray(record.messages) && historyRequiresThinkingBlocks(record.messages)) {
+                      delete record.thinking;
+                      const oc = record.output_config;
+                      if (oc) {
+                        delete oc.effort;
+                        if (Object.keys(oc).length === 0)
+                          delete record.output_config;
+                      }
+                      log("onPayload: stripped adaptive thinking — history has tool_use without thinking blocks", { modelId: String(model?.id ?? "") });
+                    }
                     clampMaxTokens(record);
                   }
                   const chained = originalOnPayload?.(payload, payloadModel);

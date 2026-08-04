@@ -378,6 +378,49 @@ export function injectJsonSystemPrompt(
 }
 
 // ---------------------------------------------------------------------------
+// Adaptive thinking — history compatibility check
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when the message history contains an assistant message whose
+ * first content block is NOT a thinking/redacted_thinking block but DOES
+ * contain a tool_use block.
+ *
+ * When adaptive thinking is enabled, Snowflake Cortex (Anthropic API) requires
+ * that any assistant message preceding tool_use blocks starts with a thinking
+ * block. OpenClaw's context-replay pipeline strips thinking blocks from prior
+ * turns, so long tool-use conversations trigger a 400:
+ *   "a final assistant message must start with a thinking block (preceding the
+ *    lastmost set of tool_use and tool_result blocks)"
+ *
+ * Callers should strip `thinking` + `output_config.effort` from the outbound
+ * payload when this returns true, so adaptive thinking degrades gracefully
+ * instead of producing a hard 400 → model fallback.
+ *
+ * Fast path: returns false immediately when no assistant message needs fixing
+ * (zero allocations on the common case for fresh conversations).
+ */
+export function historyRequiresThinkingBlocks(messages: unknown[]): boolean {
+  for (const msg of messages) {
+    if (!msg || typeof msg !== "object") continue;
+    const m = msg as Record<string, unknown>;
+    if (m.role !== "assistant") continue;
+    if (!Array.isArray(m.content) || m.content.length === 0) continue;
+    const firstBlock = m.content[0] as Record<string, unknown> | undefined;
+    if (!firstBlock) continue;
+    const firstType = firstBlock.type;
+    if (firstType === "thinking" || firstType === "redacted_thinking") continue;
+    // First block is not a thinking block — check if this message has tool_use.
+    const hasToolUse = (m.content as unknown[]).some(
+      (b) => b && typeof b === "object" &&
+        (b as Record<string, unknown>).type === "tool_use",
+    );
+    if (hasToolUse) return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Document block stripping — Snowflake Cortex does not support native PDF
 // document blocks (Anthropic API feature). Strip before forwarding.
 // ---------------------------------------------------------------------------

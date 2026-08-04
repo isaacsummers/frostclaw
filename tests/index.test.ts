@@ -8,6 +8,7 @@ import {
   isClaudeModel,
   levelBudget,
   levelEffort,
+  historyRequiresThinkingBlocks,
 } from "../src/transforms.js";
 
 // ---------------------------------------------------------------------------
@@ -396,5 +397,141 @@ describe("stripEagerInputStreaming", () => {
     const payload: Record<string, unknown> = { tools: "not-an-array" };
     stripEagerInputStreaming(payload);
     expect(payload.tools).toBe("not-an-array");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// historyRequiresThinkingBlocks
+// ---------------------------------------------------------------------------
+
+describe("historyRequiresThinkingBlocks", () => {
+  test("empty messages returns false (fast path)", () => {
+    expect(historyRequiresThinkingBlocks([])).toBe(false);
+  });
+
+  test("only user messages: returns false", () => {
+    const msgs = [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+    ];
+    expect(historyRequiresThinkingBlocks(msgs)).toBe(false);
+  });
+
+  test("assistant message with only text: returns false", () => {
+    const msgs = [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+      { role: "assistant", content: [{ type: "text", text: "hello" }] },
+    ];
+    expect(historyRequiresThinkingBlocks(msgs)).toBe(false);
+  });
+
+  test("assistant message starting with thinking block: returns false", () => {
+    const msgs = [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "let me think..." },
+          { type: "tool_use", id: "t1", name: "foo", input: {} },
+        ],
+      },
+    ];
+    expect(historyRequiresThinkingBlocks(msgs)).toBe(false);
+  });
+
+  test("assistant message starting with redacted_thinking block: returns false", () => {
+    const msgs = [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "redacted_thinking", data: "enc..." },
+          { type: "tool_use", id: "t1", name: "foo", input: {} },
+        ],
+      },
+    ];
+    expect(historyRequiresThinkingBlocks(msgs)).toBe(false);
+  });
+
+  test("assistant message starting with tool_use (no thinking): returns true", () => {
+    const msgs = [
+      { role: "user", content: [{ type: "text", text: "do the thing" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "t1", name: "foo", input: {} },
+        ],
+      },
+      {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "t1", content: "done" }],
+      },
+    ];
+    expect(historyRequiresThinkingBlocks(msgs)).toBe(true);
+  });
+
+  test("assistant message starting with text that also has tool_use: returns true", () => {
+    // text-first assistant message that also includes a tool_use
+    // is also incompatible (thinking must come first)
+    const msgs = [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Let me look that up." },
+          { type: "tool_use", id: "t1", name: "search", input: {} },
+        ],
+      },
+    ];
+    expect(historyRequiresThinkingBlocks(msgs)).toBe(true);
+  });
+
+  test("assistant message with only text (no tool_use): returns false even without thinking", () => {
+    const msgs = [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "sure, no tools needed" },
+        ],
+      },
+    ];
+    expect(historyRequiresThinkingBlocks(msgs)).toBe(false);
+  });
+
+  test("multiple turns: detects the bad one among good ones", () => {
+    const msgs = [
+      { role: "user", content: [{ type: "text", text: "turn 1" }] },
+      // Good: has thinking
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "..." },
+          { type: "tool_use", id: "t1", name: "x", input: {} },
+        ],
+      },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+      // Bad: no thinking before tool_use
+      {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "t2", name: "y", input: {} },
+        ],
+      },
+    ];
+    expect(historyRequiresThinkingBlocks(msgs)).toBe(true);
+  });
+
+  test("assistant message with empty content array: returns false", () => {
+    const msgs = [
+      { role: "assistant", content: [] },
+    ];
+    expect(historyRequiresThinkingBlocks(msgs)).toBe(false);
+  });
+
+  test("string-content assistant message (non-array): returns false", () => {
+    const msgs = [
+      { role: "assistant", content: "plain text response" },
+    ];
+    expect(historyRequiresThinkingBlocks(msgs)).toBe(false);
   });
 });

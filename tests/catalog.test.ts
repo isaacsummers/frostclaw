@@ -129,7 +129,8 @@ describe("catalog adaptiveOnly flag", () => {
       { id: "claude-opus-4-7",               adaptiveOnly: true,  reasoning: true  },
       { id: "claude-opus-4-6",               adaptiveOnly: false, reasoning: true  },
       { id: "claude-opus-4-5",               adaptiveOnly: false, reasoning: true  },
-      // Sonnet — all support full reasoning levels (budget_tokens + adaptive)
+      // Sonnet — 5 is adaptive-only; 4.x support full reasoning levels
+      { id: "claude-sonnet-5",               adaptiveOnly: true,  reasoning: true  },
       { id: "claude-sonnet-4-6",             adaptiveOnly: false, reasoning: true  },
       { id: "claude-sonnet-4-5",             adaptiveOnly: false, reasoning: true  },
       // Haiku — no reasoning

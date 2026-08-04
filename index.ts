@@ -358,6 +358,7 @@ import {
   stripResponseFormat,
   peekResponseFormat,
   injectJsonSystemPrompt,
+  historyRequiresThinkingBlocks,
   levelBudget,
   levelEffort,
   normalizeThinkingBudget,
@@ -1090,6 +1091,32 @@ export default definePluginEntry({
                     thinkingLevel,
                     isAdaptiveOnly(String((model as { id?: unknown })?.id ?? "")),
                   );
+                  // Adaptive-only models (e.g. claude-sonnet-5, claude-opus-4-8)
+                  // require that every assistant message preceding a tool_use
+                  // block starts with a thinking/redacted_thinking block.
+                  // OpenClaw's context-replay pipeline strips those thinking
+                  // blocks from history, so long tool-use conversations hit:
+                  //   400 "a final assistant message must start with a thinking
+                  //        block (preceding the lastmost tool_use/tool_result blocks)"
+                  // Fix: detect the condition and strip thinking from the
+                  // outbound payload so the request degrades gracefully instead
+                  // of returning 400 → model fallback.
+                  if (
+                    isAdaptiveOnly(String((model as { id?: unknown })?.id ?? "")) &&
+                    Array.isArray(record.messages) &&
+                    historyRequiresThinkingBlocks(record.messages)
+                  ) {
+                    delete record.thinking;
+                    const oc = record.output_config as Record<string, unknown> | undefined;
+                    if (oc) {
+                      delete oc.effort;
+                      if (Object.keys(oc).length === 0) delete record.output_config;
+                    }
+                    log(
+                      "onPayload: stripped adaptive thinking — history has tool_use without thinking blocks",
+                      { modelId: String((model as { id?: unknown })?.id ?? "") },
+                    );
+                  }
                   clampMaxTokens(record);
                 }
                 const chained = (originalOnPayload as

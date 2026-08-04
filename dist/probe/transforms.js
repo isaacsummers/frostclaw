@@ -191,6 +191,27 @@ ${sys.content}`;
   result[sysIdx] = sys;
   return result;
 }
+function historyRequiresThinkingBlocks(messages) {
+  for (const msg of messages) {
+    if (!msg || typeof msg !== "object")
+      continue;
+    const m = msg;
+    if (m.role !== "assistant")
+      continue;
+    if (!Array.isArray(m.content) || m.content.length === 0)
+      continue;
+    const firstBlock = m.content[0];
+    if (!firstBlock)
+      continue;
+    const firstType = firstBlock.type;
+    if (firstType === "thinking" || firstType === "redacted_thinking")
+      continue;
+    const hasToolUse = m.content.some((b) => b && typeof b === "object" && b.type === "tool_use");
+    if (hasToolUse)
+      return true;
+  }
+  return false;
+}
 function stripDocumentBlocks(messages) {
   let needsFix = false;
   outer:
@@ -247,6 +268,7 @@ export {
   levelBudget,
   isClaudeModel,
   injectJsonSystemPrompt,
+  historyRequiresThinkingBlocks,
   fixTrailingAssistant,
   fixEmptyTextBlocks,
   clampMaxTokens
