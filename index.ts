@@ -493,13 +493,21 @@ export default definePluginEntry({
     "behind PAT authentication.",
 
   register(api) {
-    (async () => {
-      // Wire in the OpenClaw-scoped logger immediately so all subsequent
-      // log calls route through it and respect openclaw.json logging.level
-      // and logging.consoleLevel.
-      setPluginLogger(api.logger, api.config);
-      log("plugin registered");
+    // Wire in the OpenClaw-scoped logger immediately so all subsequent
+    // log calls route through it and respect openclaw.json logging.level
+    // and logging.consoleLevel.
+    setPluginLogger(api.logger, api.config);
+    log("plugin registered");
 
+    // Proxy auto-start and the fetch interceptor are fire-and-forget: they
+    // must not block api.registerProvider() below. openclaw does not await
+    // register(), so any await before registerProvider() delays it past the
+    // point openclaw finalizes its provider list for this cycle, leaving the
+    // model catalog/resolveDynamicModel hooks unreachable ("Unknown model"
+    // for every model, regardless of catalog contents). catalog.run and
+    // resolveDynamicModel are invoked later, asynchronously, by which time
+    // this has settled — getBaseURL() picks up SNOWFLAKE_PROXY_BASE_URL then.
+    (async () => {
       // Auto-start the built-in proxy when no external proxy URL is configured.
       // Must run before the fetch interceptor and catalog so getBaseURL() returns
       // the proxy URL for all subsequent calls.
@@ -762,8 +770,14 @@ export default definePluginEntry({
       } else {
         _pluginLogger?.info("[frostclaw:fetch] interceptor already installed, skipping");
       }
+    })().catch((err) => {
+      logError("register: proxy/interceptor setup ERROR", {
+        error: String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
+    });
 
-      api.registerEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
+    api.registerEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
       api.registerProvider({
       id: "snowflake-cortex",
       label: "Snowflake Cortex",
@@ -1561,13 +1575,6 @@ export default definePluginEntry({
         // Chat completions models: default policy is fine
         return null;
       },
-    });
-    })().catch((err) => {
-      logError("register ERROR", {
-        error: String(err),
-        stack: err instanceof Error ? err.stack : undefined,
-      });
-      throw err;
     });
   },
 });

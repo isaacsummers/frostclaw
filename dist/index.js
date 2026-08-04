@@ -704,9 +704,9 @@ var frostclaw_default = definePluginEntry({
   name: "Snowflake Cortex",
   description: "Snowflake Cortex AI — routes Claude models to Anthropic Messages API " + "and all other models to OpenAI-compatible Chat Completions, both behind PAT authentication.",
   register(api) {
+    setPluginLogger(api.logger, api.config);
+    log("plugin registered");
     (async () => {
-      setPluginLogger(api.logger, api.config);
-      log("plugin registered");
       await ensureProxyRunning();
       const FETCH_INTERCEPT_MARKER = Symbol.for("frostclaw.fetchIntercepted.v2");
       if (!globalThis[FETCH_INTERCEPT_MARKER]) {
@@ -898,308 +898,286 @@ var frostclaw_default = definePluginEntry({
       } else {
         _pluginLogger?.info("[frostclaw:fetch] interceptor already installed, skipping");
       }
-      api.registerEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
-      api.registerProvider({
-        id: "snowflake-cortex",
-        label: "Snowflake Cortex",
-        auth: [
-          createProviderApiKeyAuthMethod({
-            providerId: "snowflake-cortex",
-            methodId: "snowflake-pat",
-            label: "Snowflake PAT",
-            hint: "Programmatic Access Token for Snowflake Cortex",
-            optionKey: "snowflakePat",
-            flagName: "--snowflake-pat",
-            envVar: "SNOWFLAKE_CORTEX_API_KEY",
-            promptMessage: "Enter your Snowflake Programmatic Access Token (PAT):"
-          })
-        ],
-        catalog: {
-          runtimeAugment: true,
-          run: async (ctx) => {
-            try {
-              const resolved = ctx.resolveProviderApiKey("snowflake-cortex");
-              const resolvedKey = resolved.apiKey ?? getApiKey();
-              const envKey = getApiKey();
-              const baseURL = getBaseURL();
-              log("catalog.run", {
-                resolvedKeyPresent: !!resolved.apiKey,
-                resolvedKeyLength: resolved.apiKey?.length ?? 0,
-                envKeyPresent: !!envKey,
-                envKeyLength: envKey.length,
-                baseURL: baseURL || "(not set)"
+    })().catch((err) => {
+      logError("register: proxy/interceptor setup ERROR", {
+        error: String(err),
+        stack: err instanceof Error ? err.stack : undefined
+      });
+    });
+    api.registerEmbeddingProvider(snowflakeCortexEmbeddingAdapter);
+    api.registerProvider({
+      id: "snowflake-cortex",
+      label: "Snowflake Cortex",
+      auth: [
+        createProviderApiKeyAuthMethod({
+          providerId: "snowflake-cortex",
+          methodId: "snowflake-pat",
+          label: "Snowflake PAT",
+          hint: "Programmatic Access Token for Snowflake Cortex",
+          optionKey: "snowflakePat",
+          flagName: "--snowflake-pat",
+          envVar: "SNOWFLAKE_CORTEX_API_KEY",
+          promptMessage: "Enter your Snowflake Programmatic Access Token (PAT):"
+        })
+      ],
+      catalog: {
+        runtimeAugment: true,
+        run: async (ctx) => {
+          try {
+            const resolved = ctx.resolveProviderApiKey("snowflake-cortex");
+            const resolvedKey = resolved.apiKey ?? getApiKey();
+            const envKey = getApiKey();
+            const baseURL = getBaseURL();
+            log("catalog.run", {
+              resolvedKeyPresent: !!resolved.apiKey,
+              resolvedKeyLength: resolved.apiKey?.length ?? 0,
+              envKeyPresent: !!envKey,
+              envKeyLength: envKey.length,
+              baseURL: baseURL || "(not set)"
+            });
+            if (!resolvedKey || !baseURL) {
+              log("catalog.run returning null — missing config", {
+                resolvedKey: !!resolvedKey,
+                baseURL: !!baseURL
               });
-              if (!resolvedKey || !baseURL) {
-                log("catalog.run returning null — missing config", {
-                  resolvedKey: !!resolvedKey,
-                  baseURL: !!baseURL
-                });
-                return null;
-              }
-              const models = buildModelCatalog();
-              log("catalog.run returning catalog", { modelCount: models.length });
-              return {
-                provider: {
-                  baseUrl: baseURL,
-                  apiKey: resolvedKey,
-                  api: "openai-completions",
-                  authHeader: true,
-                  models
-                }
-              };
-            } catch (err) {
-              logError("catalog.run ERROR", {
-                error: String(err),
-                stack: err instanceof Error ? err.stack : undefined
-              });
-              throw err;
+              return null;
             }
-          }
-        },
-        resolveDynamicModel(ctx) {
-          const modelId = ctx.modelId;
-          if (!modelId) {
-            log("resolveDynamicModel: no modelId");
-            return null;
-          }
-          const catalogEntry = findCatalogEntry(modelId);
-          if (catalogEntry) {
-            log("resolveDynamicModel (catalog hit)", {
-              modelId,
-              api: catalogEntry.api,
-              contextWindow: catalogEntry.contextWindow,
-              maxTokens: catalogEntry.maxTokens,
-              hasCost: !!catalogEntry.cost
+            const models = buildModelCatalog();
+            log("catalog.run returning catalog", { modelCount: models.length });
+            return {
+              provider: {
+                baseUrl: baseURL,
+                apiKey: resolvedKey,
+                api: "openai-completions",
+                authHeader: true,
+                models
+              }
+            };
+          } catch (err) {
+            logError("catalog.run ERROR", {
+              error: String(err),
+              stack: err instanceof Error ? err.stack : undefined
             });
-            return catalogEntry;
+            throw err;
           }
-          const claude = isClaudeModel(modelId);
-          const api2 = claude ? "anthropic-messages" : "openai-completions";
-          const input = claude ? ["text", "image"] : ["text"];
-          const baseUrl = getCatalogBaseURL();
-          log("resolveDynamicModel (unknown id, minimal stub)", { modelId, api: api2, input, baseUrl });
-          return { id: modelId, name: modelId, api: api2, input, baseUrl };
-        },
-        normalizeToolSchemas(ctx) {
-          if (!ctx.modelId)
-            return ctx.tools;
-          if (isClaudeModel(ctx.modelId)) {
-            return ctx.tools.map((tool) => {
-              const custom = tool.custom;
-              if (!custom || !("eager_input_streaming" in custom))
-                return tool;
-              const { eager_input_streaming: _dropped, ...rest } = custom;
-              if (Object.keys(rest).length > 0)
-                return { ...tool, custom: rest };
-              const { custom: _c, ...toolWithoutCustom } = tool;
-              return toolWithoutCustom;
-            });
-          }
-          if (!modelSupportsTools(ctx.modelId))
-            return [];
-          return ctx.tools;
-        },
-        wrapStreamFn(ctx) {
-          log("wrapStreamFn", {
-            modelId: ctx.modelId,
-            thinkingLevel: ctx.thinkingLevel,
-            thinkingActive: ctx.thinkingLevel !== undefined && ctx.thinkingLevel !== "off",
-            hasStreamFn: !!ctx.streamFn
+        }
+      },
+      resolveDynamicModel(ctx) {
+        const modelId = ctx.modelId;
+        if (!modelId) {
+          log("resolveDynamicModel: no modelId");
+          return null;
+        }
+        const catalogEntry = findCatalogEntry(modelId);
+        if (catalogEntry) {
+          log("resolveDynamicModel (catalog hit)", {
+            modelId,
+            api: catalogEntry.api,
+            contextWindow: catalogEntry.contextWindow,
+            maxTokens: catalogEntry.maxTokens,
+            hasCost: !!catalogEntry.cost
           });
-          if (!ctx.streamFn)
-            return;
-          const inner = ctx.streamFn;
-          const thinkingActive = ctx.thinkingLevel !== undefined && ctx.thinkingLevel !== "off";
-          const thinkingLevel = ctx.thinkingLevel;
-          return (model, context, options) => {
-            try {
-              let isRetryableError = function(err) {
-                if (!err)
-                  return false;
-                const msg = String(err);
-                if (msg.includes("APIConnectionTimeoutError") || msg.includes("Connection timeout"))
-                  return true;
-                if (/timed?\s?out/i.test(msg))
-                  return true;
-                if (msg.includes("ECONNRESET") || msg.includes("ECONNREFUSED") || msg.includes("ENOTFOUND"))
-                  return true;
-                if (msg.includes("UND_ERR_SOCKET") || msg.includes("UND_ERR_CONNECT_TIMEOUT") || msg.includes("UND_ERR_HEADERS_TIMEOUT") || msg.includes("UND_ERR_BODY_TIMEOUT"))
-                  return true;
-                if (msg.includes("AbortError") || msg.includes("The operation was aborted"))
-                  return true;
-                if (msg.includes("network error") || msg.includes("fetch failed"))
-                  return true;
-                if (/\bterminated\b/i.test(msg))
-                  return true;
-                if (msg.includes("GOAWAY") || msg.includes("392606"))
-                  return true;
+          return catalogEntry;
+        }
+        const claude = isClaudeModel(modelId);
+        const api2 = claude ? "anthropic-messages" : "openai-completions";
+        const input = claude ? ["text", "image"] : ["text"];
+        const baseUrl = getCatalogBaseURL();
+        log("resolveDynamicModel (unknown id, minimal stub)", { modelId, api: api2, input, baseUrl });
+        return { id: modelId, name: modelId, api: api2, input, baseUrl };
+      },
+      normalizeToolSchemas(ctx) {
+        if (!ctx.modelId)
+          return ctx.tools;
+        if (isClaudeModel(ctx.modelId)) {
+          return ctx.tools.map((tool) => {
+            const custom = tool.custom;
+            if (!custom || !("eager_input_streaming" in custom))
+              return tool;
+            const { eager_input_streaming: _dropped, ...rest } = custom;
+            if (Object.keys(rest).length > 0)
+              return { ...tool, custom: rest };
+            const { custom: _c, ...toolWithoutCustom } = tool;
+            return toolWithoutCustom;
+          });
+        }
+        if (!modelSupportsTools(ctx.modelId))
+          return [];
+        return ctx.tools;
+      },
+      wrapStreamFn(ctx) {
+        log("wrapStreamFn", {
+          modelId: ctx.modelId,
+          thinkingLevel: ctx.thinkingLevel,
+          thinkingActive: ctx.thinkingLevel !== undefined && ctx.thinkingLevel !== "off",
+          hasStreamFn: !!ctx.streamFn
+        });
+        if (!ctx.streamFn)
+          return;
+        const inner = ctx.streamFn;
+        const thinkingActive = ctx.thinkingLevel !== undefined && ctx.thinkingLevel !== "off";
+        const thinkingLevel = ctx.thinkingLevel;
+        return (model, context, options) => {
+          try {
+            let isRetryableError = function(err) {
+              if (!err)
                 return false;
-              }, isEmptyStop = function(msg, attempt) {
-                if (!msg || typeof msg !== "object")
-                  return false;
-                const sr = msg.stopReason;
-                if (sr !== "stop" && sr !== undefined && sr !== null)
-                  return false;
-                if (attempt >= EMPTY_STOP_MAX_RETRIES)
-                  return false;
-                if (!Array.isArray(msg.content))
-                  return false;
-                if (msg.content.length === 0)
-                  return true;
-                return msg.content.every((blk) => blk?.type === "thinking");
-              };
-              const modelObj = model;
-              if (modelObj && !Array.isArray(modelObj.input)) {
-                const id = String(modelObj.id ?? "");
-                const inferred = isClaudeModel(id) ? ["text", "image"] : ["text"];
-                log("wrapStreamFn.inner: patching missing input", {
-                  modelId: id,
-                  inferred,
-                  priorInput: modelObj.input,
-                  keys: Object.keys(modelObj)
-                });
-                modelObj.input = inferred;
-              }
-              if (modelObj && typeof modelObj.baseUrl !== "string") {
-                const fallbackBaseUrl = getCatalogBaseURL();
-                log("wrapStreamFn.inner: patching missing baseUrl", {
-                  modelId: String(modelObj.id ?? ""),
-                  fallbackBaseUrl,
-                  priorBaseUrl: modelObj.baseUrl
-                });
-                modelObj.baseUrl = fallbackBaseUrl;
-              }
-              log("wrapStreamFn.inner", {
-                modelId: modelObj?.id,
-                modelApi: modelObj?.api,
-                modelInput: modelObj?.input,
-                modelBaseUrl: modelObj?.baseUrl,
-                modelKeys: modelObj ? Object.keys(modelObj) : undefined,
-                hasContext: !!context,
-                hasOptions: !!options,
-                messageCount: Array.isArray(context?.messages) ? context.messages.length : undefined
+              const msg = String(err);
+              if (msg.includes("APIConnectionTimeoutError") || msg.includes("Connection timeout"))
+                return true;
+              if (/timed?\s?out/i.test(msg))
+                return true;
+              if (msg.includes("ECONNRESET") || msg.includes("ECONNREFUSED") || msg.includes("ENOTFOUND"))
+                return true;
+              if (msg.includes("UND_ERR_SOCKET") || msg.includes("UND_ERR_CONNECT_TIMEOUT") || msg.includes("UND_ERR_HEADERS_TIMEOUT") || msg.includes("UND_ERR_BODY_TIMEOUT"))
+                return true;
+              if (msg.includes("AbortError") || msg.includes("The operation was aborted"))
+                return true;
+              if (msg.includes("network error") || msg.includes("fetch failed"))
+                return true;
+              if (/\bterminated\b/i.test(msg))
+                return true;
+              if (msg.includes("GOAWAY") || msg.includes("392606"))
+                return true;
+              return false;
+            }, isEmptyStop = function(msg, attempt) {
+              if (!msg || typeof msg !== "object")
+                return false;
+              const sr = msg.stopReason;
+              if (sr !== "stop" && sr !== undefined && sr !== null)
+                return false;
+              if (attempt >= EMPTY_STOP_MAX_RETRIES)
+                return false;
+              if (!Array.isArray(msg.content))
+                return false;
+              if (msg.content.length === 0)
+                return true;
+              return msg.content.every((blk) => blk?.type === "thinking");
+            };
+            const modelObj = model;
+            if (modelObj && !Array.isArray(modelObj.input)) {
+              const id = String(modelObj.id ?? "");
+              const inferred = isClaudeModel(id) ? ["text", "image"] : ["text"];
+              log("wrapStreamFn.inner: patching missing input", {
+                modelId: id,
+                inferred,
+                priorInput: modelObj.input,
+                keys: Object.keys(modelObj)
               });
-              const originalOnPayload = options?.onPayload;
-              const catalogBeta = model?.headers?.["anthropic-beta"] ?? "";
-              const betaFlags = catalogBeta ? [catalogBeta] : [];
-              const modelSupportsReasoning = modelObj?.reasoning === true;
-              if (thinkingActive && modelSupportsReasoning) {
-                betaFlags.push(BETA_THINKING.join(","));
-              }
-              const modelId = String(model?.id ?? "");
-              const isClaudeRoute = isClaudeModel(modelId);
-              const optionsApiKey = options?.apiKey;
-              const bearerKey = typeof optionsApiKey === "string" && optionsApiKey.length > 0 ? optionsApiKey : getApiKey();
-              const authHeader = isClaudeRoute && bearerKey ? { Authorization: `Bearer ${bearerKey}` } : {};
-              if (isRequestDebugEnabled()) {
-                const ts = new Date().toISOString();
-                const thinkingInfo = thinkingActive ? `level=${thinkingLevel}` : "off";
-                const ctxRecord = context;
-                const msgCount = Array.isArray(ctxRecord?.messages) ? ctxRecord.messages.length : 0;
-                const sysPrompt = typeof ctxRecord?.systemPrompt === "string" ? ctxRecord.systemPrompt : "";
-                const maxTok = options?.maxTokens;
-                _pluginLogger?.info(`[frostclaw:debug] ${ts} → Snowflake | model=${modelId} | attempt=1 | messages=${msgCount} | maxTokens=${maxTok} | thinking=${thinkingInfo} | systemPromptChars=${sysPrompt.length}`);
-              }
-              const merged = {
-                ...options,
-                headers: {
-                  ...options?.headers,
-                  "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN",
-                  ...authHeader,
-                  ...betaFlags.length > 0 ? { "anthropic-beta": betaFlags.join(",") } : {}
-                },
-                onPayload: (payload, payloadModel) => {
-                  const payloadModelObj = payloadModel;
-                  log("onPayload", {
-                    payloadType: typeof payload,
-                    isObject: payload !== null && typeof payload === "object",
-                    payloadModelId: payloadModelObj?.id,
-                    isClaudeModelResult: payload && typeof payload === "object" ? isClaudeModel(String(model?.id ?? "")) : false
-                  });
-                  if (payload && typeof payload === "object" && isClaudeModel(String(model?.id ?? ""))) {
-                    const record = payload;
-                    if (Array.isArray(record.messages)) {
-                      record.messages = fixTrailingAssistant(record.messages);
-                      record.messages = fixEmptyTextBlocks(record.messages);
-                      record.messages = stripDocumentBlocks(record.messages);
-                    }
-                    stripEagerInputStreaming(record);
-                    const stripped = stripResponseFormat(record);
-                    if (Array.isArray(record.messages)) {
-                      record.messages = injectJsonSystemPrompt(record.messages, stripped);
-                    }
-                    normalizeThinkingBudget(record, thinkingLevel, isAdaptiveOnly(String(model?.id ?? "")));
-                    if (isAdaptiveOnly(String(model?.id ?? "")) && Array.isArray(record.messages) && historyRequiresThinkingBlocks(record.messages)) {
-                      delete record.thinking;
-                      const oc = record.output_config;
-                      if (oc) {
-                        delete oc.effort;
-                        if (Object.keys(oc).length === 0)
-                          delete record.output_config;
-                      }
-                      log("onPayload: stripped adaptive thinking — history has tool_use without thinking blocks", { modelId: String(model?.id ?? "") });
-                    }
-                    clampMaxTokens(record);
+              modelObj.input = inferred;
+            }
+            if (modelObj && typeof modelObj.baseUrl !== "string") {
+              const fallbackBaseUrl = getCatalogBaseURL();
+              log("wrapStreamFn.inner: patching missing baseUrl", {
+                modelId: String(modelObj.id ?? ""),
+                fallbackBaseUrl,
+                priorBaseUrl: modelObj.baseUrl
+              });
+              modelObj.baseUrl = fallbackBaseUrl;
+            }
+            log("wrapStreamFn.inner", {
+              modelId: modelObj?.id,
+              modelApi: modelObj?.api,
+              modelInput: modelObj?.input,
+              modelBaseUrl: modelObj?.baseUrl,
+              modelKeys: modelObj ? Object.keys(modelObj) : undefined,
+              hasContext: !!context,
+              hasOptions: !!options,
+              messageCount: Array.isArray(context?.messages) ? context.messages.length : undefined
+            });
+            const originalOnPayload = options?.onPayload;
+            const catalogBeta = model?.headers?.["anthropic-beta"] ?? "";
+            const betaFlags = catalogBeta ? [catalogBeta] : [];
+            const modelSupportsReasoning = modelObj?.reasoning === true;
+            if (thinkingActive && modelSupportsReasoning) {
+              betaFlags.push(BETA_THINKING.join(","));
+            }
+            const modelId = String(model?.id ?? "");
+            const isClaudeRoute = isClaudeModel(modelId);
+            const optionsApiKey = options?.apiKey;
+            const bearerKey = typeof optionsApiKey === "string" && optionsApiKey.length > 0 ? optionsApiKey : getApiKey();
+            const authHeader = isClaudeRoute && bearerKey ? { Authorization: `Bearer ${bearerKey}` } : {};
+            if (isRequestDebugEnabled()) {
+              const ts = new Date().toISOString();
+              const thinkingInfo = thinkingActive ? `level=${thinkingLevel}` : "off";
+              const ctxRecord = context;
+              const msgCount = Array.isArray(ctxRecord?.messages) ? ctxRecord.messages.length : 0;
+              const sysPrompt = typeof ctxRecord?.systemPrompt === "string" ? ctxRecord.systemPrompt : "";
+              const maxTok = options?.maxTokens;
+              _pluginLogger?.info(`[frostclaw:debug] ${ts} → Snowflake | model=${modelId} | attempt=1 | messages=${msgCount} | maxTokens=${maxTok} | thinking=${thinkingInfo} | systemPromptChars=${sysPrompt.length}`);
+            }
+            const merged = {
+              ...options,
+              headers: {
+                ...options?.headers,
+                "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN",
+                ...authHeader,
+                ...betaFlags.length > 0 ? { "anthropic-beta": betaFlags.join(",") } : {}
+              },
+              onPayload: (payload, payloadModel) => {
+                const payloadModelObj = payloadModel;
+                log("onPayload", {
+                  payloadType: typeof payload,
+                  isObject: payload !== null && typeof payload === "object",
+                  payloadModelId: payloadModelObj?.id,
+                  isClaudeModelResult: payload && typeof payload === "object" ? isClaudeModel(String(model?.id ?? "")) : false
+                });
+                if (payload && typeof payload === "object" && isClaudeModel(String(model?.id ?? ""))) {
+                  const record = payload;
+                  if (Array.isArray(record.messages)) {
+                    record.messages = fixTrailingAssistant(record.messages);
+                    record.messages = fixEmptyTextBlocks(record.messages);
+                    record.messages = stripDocumentBlocks(record.messages);
                   }
-                  const chained = originalOnPayload?.(payload, payloadModel);
-                  return chained !== undefined ? chained : payload;
+                  stripEagerInputStreaming(record);
+                  const stripped = stripResponseFormat(record);
+                  if (Array.isArray(record.messages)) {
+                    record.messages = injectJsonSystemPrompt(record.messages, stripped);
+                  }
+                  normalizeThinkingBudget(record, thinkingLevel, isAdaptiveOnly(String(model?.id ?? "")));
+                  if (isAdaptiveOnly(String(model?.id ?? "")) && Array.isArray(record.messages) && historyRequiresThinkingBlocks(record.messages)) {
+                    delete record.thinking;
+                    const oc = record.output_config;
+                    if (oc) {
+                      delete oc.effort;
+                      if (Object.keys(oc).length === 0)
+                        delete record.output_config;
+                    }
+                    log("onPayload: stripped adaptive thinking — history has tool_use without thinking blocks", { modelId: String(model?.id ?? "") });
+                  }
+                  clampMaxTokens(record);
                 }
-              };
-              const streamResult = inner(model, context, merged);
-              const EMPTY_STOP_MAX_RETRIES = 2;
-              const RETRY_BACKOFF_MS = (attempt) => 5000 * (attempt + 1);
-              if (streamResult && typeof streamResult.then === "function" && typeof streamResult.result !== "function") {
-                return (async () => {
-                  let currentResult = streamResult;
-                  for (let attempt = 0;attempt <= EMPTY_STOP_MAX_RETRIES; attempt++) {
-                    if (attempt > 0 && isRequestDebugEnabled()) {
-                      const ts = new Date().toISOString();
-                      const ctxRecord2 = context;
-                      const msgCount2 = Array.isArray(ctxRecord2?.messages) ? ctxRecord2.messages.length : 0;
-                      const maxTok2 = options?.maxTokens;
-                      const thinkingInfo2 = thinkingActive ? `level=${thinkingLevel}` : "off";
-                      const sysPrompt2 = typeof ctxRecord2?.systemPrompt === "string" ? ctxRecord2.systemPrompt : "";
-                      _pluginLogger?.info(`[frostclaw:debug] ${ts} → Snowflake | model=${modelId} | attempt=${attempt + 1} | messages=${msgCount2} | maxTokens=${maxTok2} | thinking=${thinkingInfo2} | systemPromptChars=${sysPrompt2.length}`);
-                    }
-                    let value;
-                    try {
-                      value = await currentResult;
-                    } catch (err) {
-                      if (isRetryableError(err) && attempt < EMPTY_STOP_MAX_RETRIES) {
-                        logWarn("wrapStreamFn.promise: retryable error from Snowflake, retrying", {
-                          modelId,
-                          attempt,
-                          error: String(err)
-                        });
-                        await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS(attempt)));
-                        const retryResult = inner(model, context, merged);
-                        if (retryResult && typeof retryResult.then === "function") {
-                          currentResult = retryResult;
-                          continue;
-                        }
-                        return retryResult;
-                      }
-                      logError("wrapStreamFn.promise REJECTED", {
-                        error: String(err),
-                        stack: err instanceof Error ? err.stack : undefined
-                      });
-                      throw err;
-                    }
-                    const valueObj = value;
-                    if (valueObj && typeof valueObj === "object" && (valueObj.errorMessage || valueObj.stopReason === "error")) {
-                      logWarn("wrapStreamFn.promise resolved with error", {
-                        errorMessage: valueObj.errorMessage,
-                        stopReason: valueObj.stopReason
-                      });
-                    }
-                    if (isEmptyStop(valueObj, attempt)) {
-                      const isThinkingOnly = Array.isArray(valueObj?.content) && valueObj.content.length > 0;
-                      logWarn("wrapStreamFn.promise: empty/thinking-only stop from Snowflake, retrying", {
+                const chained = originalOnPayload?.(payload, payloadModel);
+                return chained !== undefined ? chained : payload;
+              }
+            };
+            const streamResult = inner(model, context, merged);
+            const EMPTY_STOP_MAX_RETRIES = 2;
+            const RETRY_BACKOFF_MS = (attempt) => 5000 * (attempt + 1);
+            if (streamResult && typeof streamResult.then === "function" && typeof streamResult.result !== "function") {
+              return (async () => {
+                let currentResult = streamResult;
+                for (let attempt = 0;attempt <= EMPTY_STOP_MAX_RETRIES; attempt++) {
+                  if (attempt > 0 && isRequestDebugEnabled()) {
+                    const ts = new Date().toISOString();
+                    const ctxRecord2 = context;
+                    const msgCount2 = Array.isArray(ctxRecord2?.messages) ? ctxRecord2.messages.length : 0;
+                    const maxTok2 = options?.maxTokens;
+                    const thinkingInfo2 = thinkingActive ? `level=${thinkingLevel}` : "off";
+                    const sysPrompt2 = typeof ctxRecord2?.systemPrompt === "string" ? ctxRecord2.systemPrompt : "";
+                    _pluginLogger?.info(`[frostclaw:debug] ${ts} → Snowflake | model=${modelId} | attempt=${attempt + 1} | messages=${msgCount2} | maxTokens=${maxTok2} | thinking=${thinkingInfo2} | systemPromptChars=${sysPrompt2.length}`);
+                  }
+                  let value;
+                  try {
+                    value = await currentResult;
+                  } catch (err) {
+                    if (isRetryableError(err) && attempt < EMPTY_STOP_MAX_RETRIES) {
+                      logWarn("wrapStreamFn.promise: retryable error from Snowflake, retrying", {
                         modelId,
                         attempt,
-                        isThinkingOnly,
-                        contentLength: Array.isArray(valueObj?.content) ? valueObj.content.length : 0
+                        error: String(err)
                       });
+                      await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS(attempt)));
                       const retryResult = inner(model, context, merged);
                       if (retryResult && typeof retryResult.then === "function") {
                         currentResult = retryResult;
@@ -1207,193 +1185,214 @@ var frostclaw_default = definePluginEntry({
                       }
                       return retryResult;
                     }
-                    if (isRequestDebugEnabled()) {
-                      const ts = new Date().toISOString();
-                      const finalObj = valueObj;
-                      const contentBlocks = Array.isArray(finalObj?.content) ? finalObj.content.length : 0;
-                      _pluginLogger?.info(`[frostclaw:debug] ${ts} ← Snowflake | model=${modelId} | attempt=${attempt + 1} | stop_reason=${finalObj?.stopReason} | content_blocks=${contentBlocks} | retry=false`);
-                    }
-                    return value;
+                    logError("wrapStreamFn.promise REJECTED", {
+                      error: String(err),
+                      stack: err instanceof Error ? err.stack : undefined
+                    });
+                    throw err;
                   }
-                })();
-              }
-              if (streamResult && typeof streamResult[Symbol.asyncIterator] === "function" && typeof streamResult.result === "function") {
-                const outerStream = createAssistantMessageEventStream();
-                (async () => {
-                  let currentStream = streamResult;
-                  for (let attempt = 0;attempt <= EMPTY_STOP_MAX_RETRIES; attempt++) {
-                    if (attempt > 0 && isRequestDebugEnabled()) {
-                      const ts = new Date().toISOString();
-                      const ctxRecord3 = context;
-                      const msgCount3 = Array.isArray(ctxRecord3?.messages) ? ctxRecord3.messages.length : 0;
-                      const maxTok3 = options?.maxTokens;
-                      const thinkingInfo3 = thinkingActive ? `level=${thinkingLevel}` : "off";
-                      const sysPrompt3 = typeof ctxRecord3?.systemPrompt === "string" ? ctxRecord3.systemPrompt : "";
-                      _pluginLogger?.info(`[frostclaw:debug] ${ts} → Snowflake | model=${modelId} | attempt=${attempt + 1} | messages=${msgCount3} | maxTokens=${maxTok3} | thinking=${thinkingInfo3} | systemPromptChars=${sysPrompt3.length}`);
+                  const valueObj = value;
+                  if (valueObj && typeof valueObj === "object" && (valueObj.errorMessage || valueObj.stopReason === "error")) {
+                    logWarn("wrapStreamFn.promise resolved with error", {
+                      errorMessage: valueObj.errorMessage,
+                      stopReason: valueObj.stopReason
+                    });
+                  }
+                  if (isEmptyStop(valueObj, attempt)) {
+                    const isThinkingOnly = Array.isArray(valueObj?.content) && valueObj.content.length > 0;
+                    logWarn("wrapStreamFn.promise: empty/thinking-only stop from Snowflake, retrying", {
+                      modelId,
+                      attempt,
+                      isThinkingOnly,
+                      contentLength: Array.isArray(valueObj?.content) ? valueObj.content.length : 0
+                    });
+                    const retryResult = inner(model, context, merged);
+                    if (retryResult && typeof retryResult.then === "function") {
+                      currentResult = retryResult;
+                      continue;
                     }
-                    const buffer = [];
-                    let hasContent = false;
-                    let sseSeq = 0;
-                    let _dbgContentLen = 0;
-                    try {
-                      for await (const event of currentStream) {
-                        const evType = event?.type;
-                        if (isRequestDebugEnabled()) {
-                          const evObj = event;
-                          if (evType === "message_start") {
-                            const usage = evObj.usage;
-                            _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType} | input_tokens=${usage?.input_tokens} | cache_read_input_tokens=${usage?.cache_read_input_tokens ?? 0} | cache_creation_input_tokens=${usage?.cache_creation_input_tokens ?? 0}`);
-                          } else if (evType === "content_block_delta") {
-                            const delta = evObj.delta;
-                            const deltaType = delta?.type;
-                            if (typeof delta?.text === "string")
-                              _dbgContentLen += delta.text.length;
-                            if (typeof delta?.partial_json === "string")
-                              _dbgContentLen += delta.partial_json.length;
-                            if (typeof delta?.thinking === "string")
-                              _dbgContentLen += delta.thinking.length;
-                            _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType} | delta_type=${deltaType} | content_len=${_dbgContentLen}`);
-                          } else if (evType === "message_delta") {
-                            const delta2 = evObj.delta;
-                            const usage2 = evObj.usage;
-                            _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType} | stop_reason=${delta2?.stop_reason} | output_tokens=${usage2?.output_tokens}`);
-                          } else if (evType === "message_stop") {
-                            _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType}`);
-                          } else if (evType === "content_block_start") {
-                            const cb = evObj.content_block;
-                            _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType} | block_type=${cb?.type}`);
-                          } else if (evType === "content_block_stop") {
-                            _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType}`);
-                          } else {
-                            _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType}`);
-                          }
-                        }
-                        const isContentEvent = evType === "text_start" || evType === "text_delta" || evType === "text_end" || evType === "toolcall_start" || evType === "toolcall_delta" || evType === "toolcall_end" || evType === "thinking_start" || evType === "thinking_delta" || evType === "thinking_end";
-                        if (!hasContent && isContentEvent) {
-                          hasContent = true;
-                          for (const buffered of buffer) {
-                            outerStream.push(buffered);
-                          }
-                          buffer.length = 0;
-                        }
-                        if (hasContent) {
-                          outerStream.push(event);
+                    return retryResult;
+                  }
+                  if (isRequestDebugEnabled()) {
+                    const ts = new Date().toISOString();
+                    const finalObj = valueObj;
+                    const contentBlocks = Array.isArray(finalObj?.content) ? finalObj.content.length : 0;
+                    _pluginLogger?.info(`[frostclaw:debug] ${ts} ← Snowflake | model=${modelId} | attempt=${attempt + 1} | stop_reason=${finalObj?.stopReason} | content_blocks=${contentBlocks} | retry=false`);
+                  }
+                  return value;
+                }
+              })();
+            }
+            if (streamResult && typeof streamResult[Symbol.asyncIterator] === "function" && typeof streamResult.result === "function") {
+              const outerStream = createAssistantMessageEventStream();
+              (async () => {
+                let currentStream = streamResult;
+                for (let attempt = 0;attempt <= EMPTY_STOP_MAX_RETRIES; attempt++) {
+                  if (attempt > 0 && isRequestDebugEnabled()) {
+                    const ts = new Date().toISOString();
+                    const ctxRecord3 = context;
+                    const msgCount3 = Array.isArray(ctxRecord3?.messages) ? ctxRecord3.messages.length : 0;
+                    const maxTok3 = options?.maxTokens;
+                    const thinkingInfo3 = thinkingActive ? `level=${thinkingLevel}` : "off";
+                    const sysPrompt3 = typeof ctxRecord3?.systemPrompt === "string" ? ctxRecord3.systemPrompt : "";
+                    _pluginLogger?.info(`[frostclaw:debug] ${ts} → Snowflake | model=${modelId} | attempt=${attempt + 1} | messages=${msgCount3} | maxTokens=${maxTok3} | thinking=${thinkingInfo3} | systemPromptChars=${sysPrompt3.length}`);
+                  }
+                  const buffer = [];
+                  let hasContent = false;
+                  let sseSeq = 0;
+                  let _dbgContentLen = 0;
+                  try {
+                    for await (const event of currentStream) {
+                      const evType = event?.type;
+                      if (isRequestDebugEnabled()) {
+                        const evObj = event;
+                        if (evType === "message_start") {
+                          const usage = evObj.usage;
+                          _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType} | input_tokens=${usage?.input_tokens} | cache_read_input_tokens=${usage?.cache_read_input_tokens ?? 0} | cache_creation_input_tokens=${usage?.cache_creation_input_tokens ?? 0}`);
+                        } else if (evType === "content_block_delta") {
+                          const delta = evObj.delta;
+                          const deltaType = delta?.type;
+                          if (typeof delta?.text === "string")
+                            _dbgContentLen += delta.text.length;
+                          if (typeof delta?.partial_json === "string")
+                            _dbgContentLen += delta.partial_json.length;
+                          if (typeof delta?.thinking === "string")
+                            _dbgContentLen += delta.thinking.length;
+                          _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType} | delta_type=${deltaType} | content_len=${_dbgContentLen}`);
+                        } else if (evType === "message_delta") {
+                          const delta2 = evObj.delta;
+                          const usage2 = evObj.usage;
+                          _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType} | stop_reason=${delta2?.stop_reason} | output_tokens=${usage2?.output_tokens}`);
+                        } else if (evType === "message_stop") {
+                          _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType}`);
+                        } else if (evType === "content_block_start") {
+                          const cb = evObj.content_block;
+                          _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType} | block_type=${cb?.type}`);
+                        } else if (evType === "content_block_stop") {
+                          _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType}`);
                         } else {
-                          buffer.push(event);
+                          _pluginLogger?.info(`[frostclaw:debug] SSE[${sseSeq++}]: ${evType}`);
                         }
                       }
-                    } catch (err) {
-                      if (!hasContent && isRetryableError(err) && attempt < EMPTY_STOP_MAX_RETRIES) {
-                        logWarn("wrapStreamFn.stream: retryable error from Snowflake (no content emitted), retrying", {
-                          modelId,
-                          attempt,
-                          error: String(err)
-                        });
+                      const isContentEvent = evType === "text_start" || evType === "text_delta" || evType === "text_end" || evType === "toolcall_start" || evType === "toolcall_delta" || evType === "toolcall_end" || evType === "thinking_start" || evType === "thinking_delta" || evType === "thinking_end";
+                      if (!hasContent && isContentEvent) {
+                        hasContent = true;
+                        for (const buffered of buffer) {
+                          outerStream.push(buffered);
+                        }
                         buffer.length = 0;
-                        await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS(attempt)));
-                        const retryResult = inner(model, context, merged);
-                        if (retryResult && typeof retryResult[Symbol.asyncIterator] === "function" && typeof retryResult.result === "function") {
-                          currentStream = retryResult;
-                          continue;
-                        }
                       }
-                      logError("wrapStreamFn.stream ERROR", {
-                        attempt,
-                        error: String(err),
-                        stack: err instanceof Error ? err.stack : undefined
-                      });
-                      for (const buffered of buffer) {
-                        outerStream.push(buffered);
+                      if (hasContent) {
+                        outerStream.push(event);
+                      } else {
+                        buffer.push(event);
                       }
-                      outerStream.end();
-                      return;
                     }
-                    let finalMsg;
-                    try {
-                      finalMsg = await currentStream.result();
-                    } catch {
-                      finalMsg = undefined;
-                    }
-                    const msg = finalMsg;
-                    if (isRequestDebugEnabled()) {
-                      const ts = new Date().toISOString();
-                      const contentBlocks = Array.isArray(msg?.content) ? msg.content.length : 0;
-                      const isEmpty = !hasContent && isEmptyStop(msg, attempt);
-                      const usage = msg?.usage;
-                      _pluginLogger?.info(`[frostclaw:debug] ${ts} ← Snowflake | model=${modelId} | attempt=${attempt + 1} | stop_reason=${msg?.stopReason} | content_blocks=${contentBlocks} | empty_stop=${isEmpty} | input_tokens=${usage?.inputTokens ?? usage?.input_tokens} | output_tokens=${usage?.outputTokens ?? usage?.output_tokens} | cache_read_input_tokens=${usage?.cacheReadInputTokens ?? usage?.cache_read_input_tokens ?? 0} | cache_creation_input_tokens=${usage?.cacheCreationInputTokens ?? usage?.cache_creation_input_tokens ?? 0}`);
-                    }
-                    if (!hasContent && isEmptyStop(msg, attempt)) {
-                      const isThinkingOnly = Array.isArray(msg?.content) && msg.content.length > 0;
-                      logWarn("wrapStreamFn.stream: empty/thinking-only stop from Snowflake, retrying", {
+                  } catch (err) {
+                    if (!hasContent && isRetryableError(err) && attempt < EMPTY_STOP_MAX_RETRIES) {
+                      logWarn("wrapStreamFn.stream: retryable error from Snowflake (no content emitted), retrying", {
                         modelId,
                         attempt,
-                        isThinkingOnly
+                        error: String(err)
                       });
                       buffer.length = 0;
+                      await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS(attempt)));
                       const retryResult = inner(model, context, merged);
                       if (retryResult && typeof retryResult[Symbol.asyncIterator] === "function" && typeof retryResult.result === "function") {
                         currentStream = retryResult;
                         continue;
                       }
-                      outerStream.end(finalMsg);
-                      return;
                     }
+                    logError("wrapStreamFn.stream ERROR", {
+                      attempt,
+                      error: String(err),
+                      stack: err instanceof Error ? err.stack : undefined
+                    });
                     for (const buffered of buffer) {
                       outerStream.push(buffered);
+                    }
+                    outerStream.end();
+                    return;
+                  }
+                  let finalMsg;
+                  try {
+                    finalMsg = await currentStream.result();
+                  } catch {
+                    finalMsg = undefined;
+                  }
+                  const msg = finalMsg;
+                  if (isRequestDebugEnabled()) {
+                    const ts = new Date().toISOString();
+                    const contentBlocks = Array.isArray(msg?.content) ? msg.content.length : 0;
+                    const isEmpty = !hasContent && isEmptyStop(msg, attempt);
+                    const usage = msg?.usage;
+                    _pluginLogger?.info(`[frostclaw:debug] ${ts} ← Snowflake | model=${modelId} | attempt=${attempt + 1} | stop_reason=${msg?.stopReason} | content_blocks=${contentBlocks} | empty_stop=${isEmpty} | input_tokens=${usage?.inputTokens ?? usage?.input_tokens} | output_tokens=${usage?.outputTokens ?? usage?.output_tokens} | cache_read_input_tokens=${usage?.cacheReadInputTokens ?? usage?.cache_read_input_tokens ?? 0} | cache_creation_input_tokens=${usage?.cacheCreationInputTokens ?? usage?.cache_creation_input_tokens ?? 0}`);
+                  }
+                  if (!hasContent && isEmptyStop(msg, attempt)) {
+                    const isThinkingOnly = Array.isArray(msg?.content) && msg.content.length > 0;
+                    logWarn("wrapStreamFn.stream: empty/thinking-only stop from Snowflake, retrying", {
+                      modelId,
+                      attempt,
+                      isThinkingOnly
+                    });
+                    buffer.length = 0;
+                    const retryResult = inner(model, context, merged);
+                    if (retryResult && typeof retryResult[Symbol.asyncIterator] === "function" && typeof retryResult.result === "function") {
+                      currentStream = retryResult;
+                      continue;
                     }
                     outerStream.end(finalMsg);
                     return;
                   }
-                })();
-                return outerStream;
-              }
-              return streamResult;
-            } catch (err) {
-              logError("wrapStreamFn.inner ERROR", {
-                error: String(err),
-                stack: err instanceof Error ? err.stack : undefined
-              });
-              throw err;
+                  for (const buffered of buffer) {
+                    outerStream.push(buffered);
+                  }
+                  outerStream.end(finalMsg);
+                  return;
+                }
+              })();
+              return outerStream;
             }
-          };
-        },
-        normalizeResolvedModel: (_ctx) => {
-          return { ..._ctx.model };
-        },
-        applyConfigDefaults: (_ctx) => {
-          return null;
-        },
-        resolveThinkingProfile(ctx) {
-          if (!ctx.modelId)
-            return null;
-          if (!isClaudeModel(ctx.modelId))
-            return null;
-          const bareId = ctx.modelId.replace(/^snowflake-cortex\//, "");
-          return resolveClaudeThinkingProfile(bareId) ?? null;
-        },
-        buildReplayPolicy(ctx) {
-          if (!ctx.modelId)
-            return null;
-          if (isClaudeModel(ctx.modelId)) {
-            return {
-              sanitizeToolCallIds: true,
-              toolCallIdMode: "strict",
-              preserveNativeAnthropicToolUseIds: true,
-              repairToolUseResultPairing: true,
-              allowSyntheticToolResults: true,
-              validateAnthropicTurns: true,
-              preserveSignatures: true
-            };
+            return streamResult;
+          } catch (err) {
+            logError("wrapStreamFn.inner ERROR", {
+              error: String(err),
+              stack: err instanceof Error ? err.stack : undefined
+            });
+            throw err;
           }
+        };
+      },
+      normalizeResolvedModel: (_ctx) => {
+        return { ..._ctx.model };
+      },
+      applyConfigDefaults: (_ctx) => {
+        return null;
+      },
+      resolveThinkingProfile(ctx) {
+        if (!ctx.modelId)
           return null;
+        if (!isClaudeModel(ctx.modelId))
+          return null;
+        const bareId = ctx.modelId.replace(/^snowflake-cortex\//, "");
+        return resolveClaudeThinkingProfile(bareId) ?? null;
+      },
+      buildReplayPolicy(ctx) {
+        if (!ctx.modelId)
+          return null;
+        if (isClaudeModel(ctx.modelId)) {
+          return {
+            sanitizeToolCallIds: true,
+            toolCallIdMode: "strict",
+            preserveNativeAnthropicToolUseIds: true,
+            repairToolUseResultPairing: true,
+            allowSyntheticToolResults: true,
+            validateAnthropicTurns: true,
+            preserveSignatures: true
+          };
         }
-      });
-    })().catch((err) => {
-      logError("register ERROR", {
-        error: String(err),
-        stack: err instanceof Error ? err.stack : undefined
-      });
-      throw err;
+        return null;
+      }
     });
   }
 });
