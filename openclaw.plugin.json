@@ -94,6 +94,17 @@
             "reasoning": true
           },
           {
+            "id": "claude-sonnet-5",
+            "compat": {
+              "supportedReasoningEfforts": [
+                "off",
+                "adaptive"
+              ],
+              "supportsEagerToolInputStreaming": false
+            },
+            "reasoning": true
+          },
+          {
             "id": "claude-sonnet-4-6",
             "compat": {
               "supportedReasoningEfforts": [

@@ -97,6 +97,7 @@ export const CLAUDE_MODELS: CortexModelSpec[] = [
   { id: "claude-opus-4-7",                  name: "Claude Opus 4.7",                  reasoning: true,  adaptiveOnly: true, contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-opus-4-6",                  name: "Claude Opus 4.6",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-opus-4-5",                  name: "Claude Opus 4.5",                  reasoning: true,  contextWindow: 200_000, maxTokens: 128_000, input: ["text", "image"] },
+  { id: "claude-sonnet-5",                  name: "Claude Sonnet 5",                  reasoning: true,  adaptiveOnly: true, contextWindow: 1_000_000, maxTokens: 128_000, input: ["text", "image"] },
   { id: "claude-sonnet-4-6",                name: "Claude Sonnet 4.6",                reasoning: true,  contextWindow: 1_000_000, maxTokens: 64_000,  input: ["text", "image"] },
   { id: "claude-4-sonnet",                  name: "Claude 4 Sonnet",                  reasoning: true,  contextWindow: 1_000_000, maxTokens: 64_000,  input: ["text", "image"] },
   { id: "claude-sonnet-4-5",                name: "Claude Sonnet 4.5",                reasoning: true,  contextWindow: 200_000, maxTokens: 64_000,  input: ["text", "image"] },
