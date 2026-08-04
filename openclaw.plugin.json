@@ -283,24 +283,6 @@
             "reasoning": true
           },
           {
-            "id": "deepseek-r1",
-            "compat": {
-              "supportedReasoningEfforts": [
-                "off"
-              ]
-            },
-            "reasoning": false
-          },
-          {
-            "id": "llama3.1-405b",
-            "compat": {
-              "supportedReasoningEfforts": [
-                "off"
-              ]
-            },
-            "reasoning": false
-          },
-          {
             "id": "llama3.1-70b",
             "compat": {
               "supportedReasoningEfforts": [
@@ -355,15 +337,6 @@
             "reasoning": false
           },
           {
-            "id": "mistral-large",
-            "compat": {
-              "supportedReasoningEfforts": [
-                "off"
-              ]
-            },
-            "reasoning": false
-          },
-          {
             "id": "mistral-large2",
             "compat": {
               "supportedReasoningEfforts": [
@@ -374,15 +347,6 @@
           },
           {
             "id": "mistral-7b",
-            "compat": {
-              "supportedReasoningEfforts": [
-                "off"
-              ]
-            },
-            "reasoning": false
-          },
-          {
-            "id": "snowflake-llama-3.3-70b",
             "compat": {
               "supportedReasoningEfforts": [
                 "off"

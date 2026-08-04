@@ -118,16 +118,12 @@ export const OPENAI_MODELS: CortexModelSpec[] = [
 ];
 
 export const OPEN_SOURCE_MODELS: CortexModelSpec[] = [
-  { id: "deepseek-r1",              name: "DeepSeek R1",               reasoning: false, contextWindow: 64_000,    maxTokens: 16_384, input: ["text"] },
-  { id: "llama3.1-405b",            name: "Llama 3.1 405B",            reasoning: false, contextWindow: 128_000,   maxTokens: 32_768, input: ["text"] },
   { id: "llama3.1-70b",             name: "Llama 3.1 70B",             reasoning: false, contextWindow: 128_000,   maxTokens: 32_768, input: ["text"] },
   { id: "llama3.1-8b",              name: "Llama 3.1 8B",              reasoning: false, contextWindow: 128_000,   maxTokens: 32_768, input: ["text"] },
   { id: "llama3.3-70b",             name: "Llama 3.3 70B",             reasoning: false, contextWindow: 128_000,   maxTokens: 32_768, input: ["text"] },
   { id: "llama4-maverick",          name: "Llama 4 Maverick",          reasoning: false, contextWindow: 1_047_576, maxTokens: 32_768, input: ["text"] },
-  { id: "mistral-large",            name: "Mistral Large",             reasoning: false, contextWindow: 32_000,    maxTokens: 8_192,  input: ["text"] },
   { id: "mistral-large2",           name: "Mistral Large 2",           reasoning: false, contextWindow: 128_000,   maxTokens: 32_768, input: ["text"] },
   { id: "mistral-7b",               name: "Mistral 7B",                reasoning: false, contextWindow: 32_000,    maxTokens: 8_192,  input: ["text"] },
-  { id: "snowflake-llama-3.3-70b",  name: "Snowflake Llama 3.3 70B",  reasoning: false, contextWindow: 128_000,   maxTokens: 32_768, input: ["text"] },
 ];
 
 // ---------------------------------------------------------------------------
@@ -153,12 +149,9 @@ const COST_GPT5_NANO      = { input: 0.06,  output: 0.44,  cacheRead: 0.006, cac
 const COST_GPT41          = { input: 2.2,   output: 8.8,   cacheRead: 0.55,  cacheWrite: 0 };
 
 // Open-source models
-const COST_DEEPSEEK_R1    = { input: 1.35,  output: 5.4,   cacheRead: 0, cacheWrite: 0 };
-const COST_LLAMA_405B     = { input: 2.4,   output: 2.4,   cacheRead: 0, cacheWrite: 0 };
 const COST_LLAMA_70B      = { input: 0.72,  output: 0.72,  cacheRead: 0, cacheWrite: 0 };
 const COST_LLAMA_8B       = { input: 0.22,  output: 0.22,  cacheRead: 0, cacheWrite: 0 };
 const COST_LLAMA4_MAV     = { input: 0.24,  output: 0.97,  cacheRead: 0, cacheWrite: 0 };
-const COST_MISTRAL_LG     = { input: 4,     output: 12,    cacheRead: 0, cacheWrite: 0 };
 const COST_MISTRAL_LG2    = { input: 2,     output: 6,     cacheRead: 0, cacheWrite: 0 };
 const COST_MISTRAL_7B     = { input: 0.15,  output: 0.2,   cacheRead: 0, cacheWrite: 0 };
 
@@ -227,16 +220,12 @@ export function buildOpenAIModelDef(spec: CortexModelSpec, baseURL?: string): Mo
 }
 
 function openSourceCost(id: string): CostConfig {
-  if (id === "deepseek-r1")             return COST_DEEPSEEK_R1;
-  if (id === "llama3.1-405b")           return COST_LLAMA_405B;
   if (id === "llama3.1-70b")            return COST_LLAMA_70B;
   if (id === "llama3.1-8b")             return COST_LLAMA_8B;
   if (id === "llama3.3-70b")            return COST_LLAMA_70B;
   if (id === "llama4-maverick")         return COST_LLAMA4_MAV;
-  if (id === "mistral-large")           return COST_MISTRAL_LG;
   if (id === "mistral-large2")          return COST_MISTRAL_LG2;
   if (id === "mistral-7b")              return COST_MISTRAL_7B;
-  if (id === "snowflake-llama-3.3-70b") return COST_LLAMA_70B;
   return COST_LLAMA_70B;
 }
 

@@ -392,8 +392,8 @@ describe("normalizeToolSchemas", () => {
     expect(normalizeToolSchemasReplica("llama3.3-70b", fakeTools)).toEqual([]);
   });
 
-  test("DeepSeek R1: tools stripped", () => {
-    expect(normalizeToolSchemasReplica("deepseek-r1", fakeTools)).toEqual([]);
+  test("Llama 3.1 70B: tools stripped", () => {
+    expect(normalizeToolSchemasReplica("llama3.1-70b", fakeTools)).toEqual([]);
   });
 
   test("Mistral Large 2: tools stripped", () => {

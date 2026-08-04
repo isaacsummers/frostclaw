@@ -30,7 +30,14 @@ if (!process.env.SNOWFLAKE_BASE_URL) {
   if (existsSync(envFile)) {
     for (const line of readFileSync(envFile, "utf8").split("\n")) {
       const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
-      if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim();
+      if (m && !process.env[m[1]]) {
+        // Strip surrounding single or double quotes (shell .env convention)
+        let val = m[2].trim();
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
+        process.env[m[1]] = val;
+      }
     }
   }
 }

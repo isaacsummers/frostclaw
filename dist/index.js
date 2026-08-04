@@ -287,16 +287,12 @@ var OPENAI_MODELS = [
   { id: "openai-gpt-4.1", name: "GPT-4.1", reasoning: false, contextWindow: 1047576, maxTokens: 32768, input: ["text", "image"] }
 ];
 var OPEN_SOURCE_MODELS = [
-  { id: "deepseek-r1", name: "DeepSeek R1", reasoning: false, contextWindow: 64000, maxTokens: 16384, input: ["text"] },
-  { id: "llama3.1-405b", name: "Llama 3.1 405B", reasoning: false, contextWindow: 128000, maxTokens: 32768, input: ["text"] },
   { id: "llama3.1-70b", name: "Llama 3.1 70B", reasoning: false, contextWindow: 128000, maxTokens: 32768, input: ["text"] },
   { id: "llama3.1-8b", name: "Llama 3.1 8B", reasoning: false, contextWindow: 128000, maxTokens: 32768, input: ["text"] },
   { id: "llama3.3-70b", name: "Llama 3.3 70B", reasoning: false, contextWindow: 128000, maxTokens: 32768, input: ["text"] },
   { id: "llama4-maverick", name: "Llama 4 Maverick", reasoning: false, contextWindow: 1047576, maxTokens: 32768, input: ["text"] },
-  { id: "mistral-large", name: "Mistral Large", reasoning: false, contextWindow: 32000, maxTokens: 8192, input: ["text"] },
   { id: "mistral-large2", name: "Mistral Large 2", reasoning: false, contextWindow: 128000, maxTokens: 32768, input: ["text"] },
-  { id: "mistral-7b", name: "Mistral 7B", reasoning: false, contextWindow: 32000, maxTokens: 8192, input: ["text"] },
-  { id: "snowflake-llama-3.3-70b", name: "Snowflake Llama 3.3 70B", reasoning: false, contextWindow: 128000, maxTokens: 32768, input: ["text"] }
+  { id: "mistral-7b", name: "Mistral 7B", reasoning: false, contextWindow: 32000, maxTokens: 8192, input: ["text"] }
 ];
 var COST_FABLE = { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 };
 var COST_OPUS = { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 };
@@ -309,12 +305,9 @@ var COST_GPT51 = { input: 1.38, output: 11, cacheRead: 0.138, cacheWrite: 0 };
 var COST_GPT5_MINI = { input: 0.275, output: 2.2, cacheRead: 0.028, cacheWrite: 0 };
 var COST_GPT5_NANO = { input: 0.06, output: 0.44, cacheRead: 0.006, cacheWrite: 0 };
 var COST_GPT41 = { input: 2.2, output: 8.8, cacheRead: 0.55, cacheWrite: 0 };
-var COST_DEEPSEEK_R1 = { input: 1.35, output: 5.4, cacheRead: 0, cacheWrite: 0 };
-var COST_LLAMA_405B = { input: 2.4, output: 2.4, cacheRead: 0, cacheWrite: 0 };
 var COST_LLAMA_70B = { input: 0.72, output: 0.72, cacheRead: 0, cacheWrite: 0 };
 var COST_LLAMA_8B = { input: 0.22, output: 0.22, cacheRead: 0, cacheWrite: 0 };
 var COST_LLAMA4_MAV = { input: 0.24, output: 0.97, cacheRead: 0, cacheWrite: 0 };
-var COST_MISTRAL_LG = { input: 4, output: 12, cacheRead: 0, cacheWrite: 0 };
 var COST_MISTRAL_LG2 = { input: 2, output: 6, cacheRead: 0, cacheWrite: 0 };
 var COST_MISTRAL_7B = { input: 0.15, output: 0.2, cacheRead: 0, cacheWrite: 0 };
 function claudeCost(id) {
@@ -386,10 +379,6 @@ function buildOpenAIModelDef(spec, baseURL) {
   };
 }
 function openSourceCost(id) {
-  if (id === "deepseek-r1")
-    return COST_DEEPSEEK_R1;
-  if (id === "llama3.1-405b")
-    return COST_LLAMA_405B;
   if (id === "llama3.1-70b")
     return COST_LLAMA_70B;
   if (id === "llama3.1-8b")
@@ -398,14 +387,10 @@ function openSourceCost(id) {
     return COST_LLAMA_70B;
   if (id === "llama4-maverick")
     return COST_LLAMA4_MAV;
-  if (id === "mistral-large")
-    return COST_MISTRAL_LG;
   if (id === "mistral-large2")
     return COST_MISTRAL_LG2;
   if (id === "mistral-7b")
     return COST_MISTRAL_7B;
-  if (id === "snowflake-llama-3.3-70b")
-    return COST_LLAMA_70B;
   return COST_LLAMA_70B;
 }
 function buildOpenSourceModelDef(spec, baseURL) {

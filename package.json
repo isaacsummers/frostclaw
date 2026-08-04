@@ -15,7 +15,8 @@
     ]
   },
   "scripts": {
-    "build": "bun build ./index.ts --outfile ./dist/index.js --bundle --external 'openclaw'",
+    "lint": "node -e \"JSON.parse(require('fs').readFileSync('openclaw.plugin.json','utf8'))\" && echo 'openclaw.plugin.json: valid'",
+    "build": "bun run lint && bun build ./index.ts --outfile ./dist/index.js --bundle --external 'openclaw'",
     "test": "bun test tests/index.test.ts tests/proxy.test.ts tests/beta-headers.test.ts tests/catalog.test.ts",
     "test:live": "bun test tests/live/"
   },

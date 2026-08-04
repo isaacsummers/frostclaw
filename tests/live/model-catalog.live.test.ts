@@ -160,15 +160,11 @@ describe("live: Open-source models (Chat Completions)", () => {
   if (!HAVE_CREDS) { test.skip("no credentials", () => {}); }
 
   const OSS_MODELS = [
-    "deepseek-r1",
-    "llama3.1-405b",
     "llama3.1-70b",
     "llama3.1-8b",
     "llama4-maverick",
     "mistral-7b",
-    "mistral-large",
     "mistral-large2",
-    "snowflake-llama-3.3-70b",
   ];
 
   // llama3.3-70b: region-locked, not dead — skip rather than fail
