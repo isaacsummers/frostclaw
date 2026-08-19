@@ -333,6 +333,81 @@ describe("POST /v1/messages", () => {
     const body = (await res.json()) as { message: string };
     expect(body.message).toContain("tool_use");
   });
+
+  test("connection dropped mid-stream (no message_stop) — retries and recovers cleanly", async () => {
+    // Reproduces the real-world root cause: Snowflake Cortex's backend
+    // resets the TCP connection mid-response (HTTP/2 GOAWAY / "connection
+    // reset by peer", error 392606) after the SSE stream has already
+    // started. undici surfaces that as a bare "terminated" error on
+    // reader.read() — this must be retried transparently, not surfaced to
+    // the client as a truncated/failed stream.
+    let attempt = 0;
+    mock.setHandler(async (_req, res) => {
+      attempt++;
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.write('event: content_block_start\ndata: {"type":"content_block_start"}\n\n');
+      if (attempt === 1) {
+        // Simulate Snowflake killing the connection before message_stop.
+        res.destroy();
+        return;
+      }
+      res.write('event: message_stop\ndata: {"type":"message_stop"}\n\n');
+      res.end();
+    });
+
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/api/v2/cortex/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-5",
+        stream: true,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(attempt).toBe(2); // one dropped attempt, one clean retry
+    const body = await res.text();
+    expect(body).toContain("message_stop");
+    expect(res.headers.get("x-retry-count")).toBe("1");
+  });
+
+  test("connection dropped mid-stream, retries exhausted — surfaces a clean 502 (never a truncated stream)", async () => {
+    // Speed up the exponential backoff for this test so exhausting all
+    // retries doesn't blow the test timeout; getRetryWaitMs() reads this
+    // env var fresh on every call, so this takes effect immediately.
+    const prevBaseDelay = process.env.PROXY_RETRY_BASE_DELAY;
+    process.env.PROXY_RETRY_BASE_DELAY = "0";
+    try {
+      mock.setHandler(async (_req, res) => {
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        res.write('event: content_block_start\ndata: {"type":"content_block_start"}\n\n');
+        res.destroy();
+      });
+
+      const res = await fetch(`http://127.0.0.1:${proxyPort}/api/v2/cortex/v1/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-5",
+          stream: true,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      });
+
+      expect(res.status).toBe(502);
+      const body = (await res.json()) as { error: { message: string } };
+      // Depending on exactly when the mock destroys the socket, this can
+      // surface as either the mid-stream-drop path or the earlier
+      // fetch-level connection-closed path — both are correct outcomes:
+      // a clean JSON 502 after exhausting retries, never a truncated SSE
+      // stream leaked to the client.
+      expect(body.error.message).toMatch(/dropped mid-stream|socket connection was closed/i);
+    } finally {
+      if (prevBaseDelay === undefined) delete process.env.PROXY_RETRY_BASE_DELAY;
+      else process.env.PROXY_RETRY_BASE_DELAY = prevBaseDelay;
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -364,9 +439,14 @@ describe("POST /api/v2/cortex/v1/chat/completions", () => {
   });
 
   test("streaming passthrough — content-type: text/event-stream", async () => {
+    // Real Snowflake chat/completions streams terminate with OpenAI's
+    // `data: [DONE]` marker (not Anthropic's message_stop). The proxy's
+    // buffer-and-verify logic waits for that terminal event before
+    // flushing, so the mock must send one to reflect real behavior.
     mock.setHandler(async (_req, res) => {
       res.writeHead(200, { "Content-Type": "text/event-stream" });
-      res.write('data: {"type":"content_block_start"}\n\n');
+      res.write('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n');
+      res.write("data: [DONE]\n\n");
       res.end();
     });
 

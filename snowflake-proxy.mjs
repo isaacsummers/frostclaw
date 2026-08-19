@@ -566,6 +566,167 @@ export function createProxyServer(config) {
     return headers;
   }
 
+  // ── Streaming helper ────────────────────────────────────────────────────────
+  //
+  // Snowflake Cortex's backend intermittently resets the underlying TCP
+  // connection mid-response (java.io.IOException: Connection reset by peer /
+  // HTTP2 GOAWAY — see isRetryableStatus()'s 392606 handling). When that
+  // reset happens *before* headers are sent, fetch() surfaces it as a
+  // retryable HTTP error and the loop above already handles it. When it
+  // happens *after* the SSE stream has started, undici's reader.read() throws
+  // "terminated" instead — previously unretried, which is what surfaced to
+  // OpenClaw as "Anthropic stream ended before message_stop" / "LLM request
+  // failed."
+  //
+  // Fix: buffer the whole SSE response in memory instead of forwarding bytes
+  // to the client as they arrive. That means nothing has been sent to the
+  // real client yet if the connection drops, so we can transparently retry
+  // the entire request — the same way the non-streaming path already retries
+  // — and only flush the buffered bytes once we've confirmed a clean
+  // terminal event. This route serves two SSE dialects with different
+  // terminal markers: Anthropic Messages (message_stop) and OpenAI-compat
+  // chat/completions ([DONE]) — see isAnthropicFormat below. Trade-off: the
+  // client no longer sees token-by-token latency on a request that needed a
+  // retry (it gets the full reply in one shot instead), but never sees a
+  // truncated stream.
+  async function proxyStreamingRequest(req, res, targetUrl, forwardHeaders, bodyStr, maxRetries, baseDelayMs, routeName) {
+    // Anthropic Messages SSE terminates with a `message_stop` event.
+    // OpenAI-compat chat/completions SSE terminates with `data: [DONE]`.
+    // Using the wrong terminal marker means every completions stream gets
+    // misdetected as "dropped mid-stream" and needlessly retried/502'd.
+    const isAnthropicFormat = targetUrl.includes("/v1/messages");
+    let retryCount = 0;
+    let clientAborted = false;
+    const onClientAbort = () => { clientAborted = true; };
+    req.socket?.once("close", onClientAbort);
+    req.socket?.once("error", onClientAbort);
+
+    const sendJsonError = (status, message) => {
+      if (res.headersSent || res.destroyed) { res.end(); return; }
+      const body = JSON.stringify({ error: { type: "upstream_stream_error", message } });
+      res.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(body).toString() });
+      res.end(body);
+    };
+
+    try {
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        if (clientAborted) return;
+        const _t0 = Date.now();
+        const fetchOpts = { method: "POST", headers: forwardHeaders, body: bodyStr };
+        if (_snowflakeAgent) fetchOpts.dispatcher = _snowflakeAgent;
+
+        let sfRes;
+        try {
+          sfRes = await _snowflakeFetch(targetUrl, fetchOpts);
+        } catch (err) {
+          if (attempt < maxRetries) {
+            const waitMs = getRetryWaitMs(new Headers(), attempt, baseDelayMs);
+            console.warn(`[frostclaw-proxy] fetch error on streaming ${routeName} (${err.message}) — retry ${attempt + 1}/${maxRetries} in ${(waitMs / 1000).toFixed(1)}s`);
+            await new Promise((resolve) => setTimeout(resolve, waitMs));
+            retryCount++;
+            continue;
+          }
+          sendJsonError(502, `Snowflake fetch failed after ${retryCount} retries: ${err.message}`);
+          return;
+        }
+        console.log(`[frostclaw-proxy] upstream ${routeName} → ${sfRes.status} (${Date.now() - _t0}ms, reqBytes=${bodyStr.length}${retryCount > 0 ? `, retry=${retryCount}` : ""})`);
+
+        if (!sfRes.ok) {
+          const errBody = await sfRes.text().catch(() => "");
+          if (attempt < maxRetries && isRetryableStatus(sfRes.status, errBody)) {
+            const waitMs = getRetryWaitMs(sfRes.headers, attempt, baseDelayMs);
+            console.warn(`[frostclaw-proxy] retryable ${sfRes.status} from ${routeName} — waiting ${(waitMs / 1000).toFixed(1)}s before retry ${attempt + 1}/${maxRetries} (Retry-After: ${sfRes.headers.get("retry-after") ?? "none"})`);
+            await new Promise((resolve) => setTimeout(resolve, waitMs));
+            retryCount++;
+            continue;
+          }
+          console.error(`[frostclaw-proxy] upstream error ${sfRes.status} on streaming request to ${routeName}${retryCount > 0 ? ` (after ${retryCount} retries)` : ""}: ${errBody.slice(0, 1000)}`);
+          const responseHeaders = { "content-type": "application/json" };
+          for (const [key, value] of sfRes.headers.entries()) {
+            const lower = key.toLowerCase();
+            if (!["content-length", "transfer-encoding", "content-encoding", "connection"].includes(lower)) {
+              responseHeaders[lower] = value;
+            }
+          }
+          if (retryCount > 0) responseHeaders["x-retry-count"] = String(retryCount);
+          responseHeaders["content-length"] = Buffer.byteLength(errBody).toString();
+          res.writeHead(sfRes.status, responseHeaders);
+          res.end(errBody);
+          return;
+        }
+
+        if (!sfRes.body) {
+          res.writeHead(sfRes.status, { "content-type": "text/event-stream" });
+          res.end();
+          return;
+        }
+
+        // Buffer the full stream, watching for the terminal SSE event.
+        const chunks = [];
+        const decoder = new TextDecoder("utf-8");
+        let decodedText = "";
+        let streamErr = null;
+        const reader = sfRes.body.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            decodedText += decoder.decode(value, { stream: true });
+          }
+        } catch (err) {
+          streamErr = err;
+        } finally {
+          reader.cancel().catch(() => {});
+        }
+
+        if (clientAborted) return;
+
+        const sawTerminalEvent = isAnthropicFormat
+          ? /event:\s*message_stop/.test(decodedText) || /"type"\s*:\s*"message_stop"/.test(decodedText)
+          : /data:\s*\[DONE\]/.test(decodedText);
+
+        if (!streamErr && sawTerminalEvent) {
+          const responseHeaders = {
+            "content-type": sfRes.headers.get("content-type") || "text/event-stream",
+            "cache-control": "no-cache",
+            connection: "keep-alive",
+          };
+          for (const [key, value] of sfRes.headers.entries()) {
+            const lower = key.toLowerCase();
+            if (!["content-length", "transfer-encoding", "connection"].includes(lower) && !responseHeaders[lower]) {
+              responseHeaders[lower] = value;
+            }
+          }
+          if (retryCount > 0) responseHeaders["x-retry-count"] = String(retryCount);
+          res.writeHead(sfRes.status, responseHeaders);
+          for (const chunk of chunks) res.write(chunk);
+          res.end();
+          return;
+        }
+
+        // Connection dropped before a terminal event — the mid-stream analog
+        // of the 392606 "connection reset by peer" case above. Retry the
+        // whole request if we have attempts left.
+        const reason = streamErr ? streamErr.message : `stream ended without ${isAnthropicFormat ? "message_stop" : "[DONE]"}`;
+        if (attempt < maxRetries) {
+          const waitMs = getRetryWaitMs(new Headers(), attempt, baseDelayMs);
+          console.warn(`[frostclaw-proxy] streaming ${routeName} dropped mid-stream (${reason}) — retry ${attempt + 1}/${maxRetries} in ${(waitMs / 1000).toFixed(1)}s`);
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+          retryCount++;
+          continue;
+        }
+
+        console.error(`[frostclaw-proxy] streaming ${routeName} dropped mid-stream after ${retryCount} retries: ${reason}`);
+        sendJsonError(502, `Snowflake Cortex connection dropped mid-stream after ${retryCount} retries: ${reason}`);
+        return;
+      }
+    } finally {
+      req.socket?.off("close", onClientAbort);
+      req.socket?.off("error", onClientAbort);
+    }
+  }
+
   // ── Proxy helper ───────────────────────────────────────────────────────────
 
   async function proxyRequest(req, res, targetUrl, extraHeaders = {}) {
@@ -586,6 +747,11 @@ export function createProxyServer(config) {
     const maxRetries = getMaxRetries();
     const baseDelayMs = getRetryBaseDelayMs();
     const routeName = targetUrl.split("/").pop();
+
+    if (isStreaming) {
+      return proxyStreamingRequest(req, res, targetUrl, forwardHeaders, bodyStr, maxRetries, baseDelayMs, routeName);
+    }
+
     let sfRes = null;
     let retryCount = 0;
 
@@ -596,12 +762,6 @@ export function createProxyServer(config) {
         headers: forwardHeaders,
         body: bodyStr,
       };
-      // Attach the long-lived undici Agent for streaming requests so Snowflake's
-      // extended thinking phases (no SSE tokens for many seconds) don't trigger
-      // a bodyTimeout disconnect on the outbound Snowflake connection.
-      if (isStreaming && _snowflakeAgent) {
-        fetchOpts.dispatcher = _snowflakeAgent;
-      }
       sfRes = await _snowflakeFetch(targetUrl, fetchOpts);
       console.log(`[frostclaw-proxy] upstream ${routeName} → ${sfRes.status} (${Date.now() - _t0}ms, reqBytes=${bodyStr.length}${retryCount > 0 ? `, retry=${retryCount}` : ""})`);
 
@@ -623,7 +783,7 @@ export function createProxyServer(config) {
 
       // Non-retryable error (or retries exhausted) — forward error to client.
       console.error(
-        `[frostclaw-proxy] upstream error ${sfRes.status} on ${isStreaming ? "streaming" : "non-streaming"} request to ${routeName}${retryCount > 0 ? ` (after ${retryCount} retries)` : ""}: ${errBody.slice(0, 1000)}`,
+        `[frostclaw-proxy] upstream error ${sfRes.status} on non-streaming request to ${routeName}${retryCount > 0 ? ` (after ${retryCount} retries)` : ""}: ${errBody.slice(0, 1000)}`,
       );
       const responseHeaders = { "content-type": "application/json" };
       for (const [key, value] of sfRes.headers.entries()) {
@@ -644,83 +804,24 @@ export function createProxyServer(config) {
       return;
     }
 
-    if (isStreaming) {
-      const responseHeaders = {
-        "content-type": sfRes.headers.get("content-type") || "text/event-stream",
-        "cache-control": "no-cache",
-        connection: "keep-alive",
-      };
-      for (const [key, value] of sfRes.headers.entries()) {
-        const lower = key.toLowerCase();
-        if (
-          lower !== "content-length" &&
-          lower !== "transfer-encoding" &&
-          lower !== "connection" &&
-          !responseHeaders[lower]
-        ) {
-          responseHeaders[lower] = value;
-        }
+    const responseBody = await sfRes.text();
+    const responseHeaders = { "content-type": "application/json" };
+    for (const [key, value] of sfRes.headers.entries()) {
+      const lower = key.toLowerCase();
+      if (
+        lower !== "content-length" &&
+        lower !== "transfer-encoding" &&
+        lower !== "content-encoding" &&
+        lower !== "connection"
+      ) {
+        responseHeaders[lower] = value;
       }
-      if (retryCount > 0) responseHeaders["x-retry-count"] = String(retryCount);
-      res.writeHead(sfRes.status, responseHeaders);
-
-      if (!sfRes.body) {
-        res.end();
-        return;
-      }
-
-      const reader = sfRes.body.getReader();
-      // Cancel upstream reader if client disconnects mid-stream to avoid
-      // leaking open Snowflake connections.
-      const cancelReader = () => { reader.cancel().catch(() => {}); };
-      req.socket?.once("close", cancelReader);
-      req.socket?.once("error", cancelReader);
-      const pump = async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              res.end();
-              break;
-            }
-            if (res.destroyed) {
-              reader.cancel().catch(() => {});
-              break;
-            }
-            const ok = res.write(value);
-            if (!ok) {
-              await new Promise((resolve) => res.once("drain", resolve));
-            }
-          }
-        } finally {
-          req.socket?.off("close", cancelReader);
-          req.socket?.off("error", cancelReader);
-        }
-      };
-      pump().catch((err) => {
-        console.error("[frostclaw] Stream pump error:", err.message);
-        if (!res.destroyed) res.end();
-      });
-    } else {
-      const responseBody = await sfRes.text();
-      const responseHeaders = { "content-type": "application/json" };
-      for (const [key, value] of sfRes.headers.entries()) {
-        const lower = key.toLowerCase();
-        if (
-          lower !== "content-length" &&
-          lower !== "transfer-encoding" &&
-          lower !== "content-encoding" &&
-          lower !== "connection"
-        ) {
-          responseHeaders[lower] = value;
-        }
-      }
-      responseHeaders["content-length"] =
-        Buffer.byteLength(responseBody).toString();
-      if (retryCount > 0) responseHeaders["x-retry-count"] = String(retryCount);
-      res.writeHead(sfRes.status, responseHeaders);
-      res.end(responseBody);
     }
+    responseHeaders["content-length"] =
+      Buffer.byteLength(responseBody).toString();
+    if (retryCount > 0) responseHeaders["x-retry-count"] = String(retryCount);
+    res.writeHead(sfRes.status, responseHeaders);
+    res.end(responseBody);
   }
 
   // ── HTTP server ────────────────────────────────────────────────────────────
