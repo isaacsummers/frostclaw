@@ -156,6 +156,32 @@ function isRetryableStatus(status, body) {
   return false;
 }
 
+/**
+ * Unwraps a fetch()-thrown error's cause chain into a single diagnostic
+ * string. undici's top-level message is almost always the generic
+ * "terminated" or "fetch failed" — the *actual* reason (socket reset vs
+ * body timeout vs DNS vs TLS) lives in err.cause (and sometimes
+ * err.cause.cause). Logging only err.message hides exactly the detail
+ * needed to tell "Snowflake reset the connection" apart from "our own
+ * client/timeout config did something wrong".
+ *
+ * @param {Error} err
+ * @returns {string}
+ */
+function describeFetchError(err) {
+  if (!err) return String(err);
+  const parts = [err.message || String(err)];
+  let cause = err.cause;
+  let depth = 0;
+  while (cause && depth < 3) {
+    const code = cause.code ? `${cause.code}: ` : "";
+    parts.push(`cause[${depth}]=${code}${cause.message || cause}`);
+    cause = cause.cause;
+    depth++;
+  }
+  return parts.join(" | ");
+}
+
 // Headers to strip from client requests before forwarding (all lowercase)
 const STRIP_HEADERS = new Set([
   "x-api-key",
@@ -471,38 +497,71 @@ export function createProxyServer(config) {
         const chunkMapping = mapping.slice(offset, offset + maxBatchTexts);
 
         let sfJson;
-        try {
-          const sfRes = await _snowflakeFetch(
-            `${baseUrl}/api/v2/cortex/inference:embed`,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${pat}`,
-                "X-Snowflake-Authorization-Token-Type":
-                  "PROGRAMMATIC_ACCESS_TOKEN",
-                "Content-Type": "application/json",
-                Accept: "application/json",
+        const embedMaxRetries = getMaxRetries();
+        const embedBaseDelayMs = getRetryBaseDelayMs();
+        let embedRetryCount = 0;
+        let embedFailed = false;
+        let embedFailErr = null;
+
+        for (let embedAttempt = 0; embedAttempt <= embedMaxRetries; embedAttempt++) {
+          try {
+            const sfRes = await _snowflakeFetch(
+              `${baseUrl}/api/v2/cortex/inference:embed`,
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${pat}`,
+                  "X-Snowflake-Authorization-Token-Type":
+                    "PROGRAMMATIC_ACCESS_TOKEN",
+                  "Content-Type": "application/json",
+                  Accept: "application/json",
+                },
+                body: JSON.stringify({ text: chunkTexts, model }),
+                ..._snowflakeAgent ? { dispatcher: _snowflakeAgent } : {},
               },
-              body: JSON.stringify({ text: chunkTexts, model }),
-            },
-          );
-
-          if (!sfRes.ok) {
-            const errBody = await sfRes.text().catch(() => "");
-            const err = new Error(`Snowflake error ${sfRes.status}: ${errBody}`);
-            const failedItemIndices = new Set(
-              chunkMapping.map((m) => m.itemIndex),
             );
-            for (const idx of failedItemIndices) items[idx].reject(err);
-            continue;
-          }
 
-          sfJson = await sfRes.json();
-        } catch (err) {
+            if (!sfRes.ok) {
+              const errBody = await sfRes.text().catch(() => "");
+              if (embedAttempt < embedMaxRetries && isRetryableStatus(sfRes.status, errBody)) {
+                const waitMs = getRetryWaitMs(sfRes.headers, embedAttempt, embedBaseDelayMs);
+                console.warn(`[frostclaw-proxy] retryable ${sfRes.status} from inference:embed — retry ${embedAttempt + 1}/${embedMaxRetries} in ${(waitMs / 1000).toFixed(1)}s`);
+                await new Promise((resolve) => setTimeout(resolve, waitMs));
+                embedRetryCount++;
+                continue;
+              }
+              embedFailed = true;
+              embedFailErr = new Error(`Snowflake error ${sfRes.status}: ${errBody}`);
+              break;
+            }
+
+            sfJson = await sfRes.json();
+            break;
+          } catch (err) {
+            // Connection reset before headers arrived (392606/GOAWAY/
+            // "terminated") — this path previously had zero retry coverage,
+            // unlike the streaming and now-fixed non-streaming proxyRequest
+            // paths. Same root cause, same fix: retry on a fresh connection.
+            const detail = describeFetchError(err);
+            if (embedAttempt < embedMaxRetries) {
+              const waitMs = getRetryWaitMs(new Headers(), embedAttempt, embedBaseDelayMs);
+              console.warn(`[frostclaw-proxy] fetch error on inference:embed (${detail}) — retry ${embedAttempt + 1}/${embedMaxRetries} in ${(waitMs / 1000).toFixed(1)}s`);
+              await new Promise((resolve) => setTimeout(resolve, waitMs));
+              embedRetryCount++;
+              continue;
+            }
+            console.error(`[frostclaw-proxy] fetch error on inference:embed after ${embedRetryCount} retries: ${detail}`);
+            embedFailed = true;
+            embedFailErr = err;
+            break;
+          }
+        }
+
+        if (embedFailed) {
           const failedItemIndices = new Set(
             chunkMapping.map((m) => m.itemIndex),
           );
-          for (const idx of failedItemIndices) items[idx].reject(err);
+          for (const idx of failedItemIndices) items[idx].reject(embedFailErr);
           continue;
         }
 
@@ -619,13 +678,15 @@ export function createProxyServer(config) {
         try {
           sfRes = await _snowflakeFetch(targetUrl, fetchOpts);
         } catch (err) {
+          const detail = describeFetchError(err);
           if (attempt < maxRetries) {
             const waitMs = getRetryWaitMs(new Headers(), attempt, baseDelayMs);
-            console.warn(`[frostclaw-proxy] fetch error on streaming ${routeName} (${err.message}) — retry ${attempt + 1}/${maxRetries} in ${(waitMs / 1000).toFixed(1)}s`);
+            console.warn(`[frostclaw-proxy] fetch error on streaming ${routeName} (${detail}) — retry ${attempt + 1}/${maxRetries} in ${(waitMs / 1000).toFixed(1)}s`);
             await new Promise((resolve) => setTimeout(resolve, waitMs));
             retryCount++;
             continue;
           }
+          console.error(`[frostclaw-proxy] fetch error on streaming ${routeName} after ${retryCount} retries: ${detail}`);
           sendJsonError(502, `Snowflake fetch failed after ${retryCount} retries: ${err.message}`);
           return;
         }
@@ -666,12 +727,14 @@ export function createProxyServer(config) {
         const decoder = new TextDecoder("utf-8");
         let decodedText = "";
         let streamErr = null;
+        let bytesReceived = 0;
         const reader = sfRes.body.getReader();
         try {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
             chunks.push(value);
+            bytesReceived += value.byteLength;
             decodedText += decoder.decode(value, { stream: true });
           }
         } catch (err) {
@@ -708,7 +771,9 @@ export function createProxyServer(config) {
         // Connection dropped before a terminal event — the mid-stream analog
         // of the 392606 "connection reset by peer" case above. Retry the
         // whole request if we have attempts left.
-        const reason = streamErr ? streamErr.message : `stream ended without ${isAnthropicFormat ? "message_stop" : "[DONE]"}`;
+        const reason = streamErr
+          ? describeFetchError(streamErr)
+          : `stream ended without ${isAnthropicFormat ? "message_stop" : "[DONE]"} (bytesReceived=${bytesReceived})`;
         if (attempt < maxRetries) {
           const waitMs = getRetryWaitMs(new Headers(), attempt, baseDelayMs);
           console.warn(`[frostclaw-proxy] streaming ${routeName} dropped mid-stream (${reason}) — retry ${attempt + 1}/${maxRetries} in ${(waitMs / 1000).toFixed(1)}s`);
@@ -762,7 +827,32 @@ export function createProxyServer(config) {
         headers: forwardHeaders,
         body: bodyStr,
       };
-      sfRes = await _snowflakeFetch(targetUrl, fetchOpts);
+      if (_snowflakeAgent) fetchOpts.dispatcher = _snowflakeAgent;
+
+      // Non-streaming requests previously had no try/catch here: if Snowflake
+      // reset the connection (392606/GOAWAY/"terminated") before headers
+      // arrived, _snowflakeFetch() threw and the exception propagated
+      // uncaught to the route handler's outer catch — an immediate 500 with
+      // zero retries, unlike the streaming path which already retried this
+      // exact failure mode. Wrap it the same way so non-streaming callers
+      // (embeddings, graphiti-core structured-output calls, etc.) get the
+      // same retry-on-connection-reset behavior.
+      try {
+        sfRes = await _snowflakeFetch(targetUrl, fetchOpts);
+      } catch (err) {
+        const detail = describeFetchError(err);
+        if (attempt < maxRetries) {
+          const waitMs = getRetryWaitMs(new Headers(), attempt, baseDelayMs);
+          console.warn(`[frostclaw-proxy] fetch error on non-streaming ${routeName} (${detail}) — retry ${attempt + 1}/${maxRetries} in ${(waitMs / 1000).toFixed(1)}s`);
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+          retryCount++;
+          continue;
+        }
+        console.error(`[frostclaw-proxy] fetch error on non-streaming ${routeName} after ${retryCount} retries: ${detail}`);
+        res.writeHead(502, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { message: `Snowflake fetch failed after ${retryCount} retries: ${err.message}`, type: "proxy_error" } }));
+        return;
+      }
       console.log(`[frostclaw-proxy] upstream ${routeName} → ${sfRes.status} (${Date.now() - _t0}ms, reqBytes=${bodyStr.length}${retryCount > 0 ? `, retry=${retryCount}` : ""})`);
 
       if (sfRes.ok) break; // success — exit retry loop

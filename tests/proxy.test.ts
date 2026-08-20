@@ -219,6 +219,35 @@ describe("POST /v1/embeddings", () => {
     });
     expect(res.status).toBeGreaterThanOrEqual(400);
   });
+
+  test("connection reset before headers (non-streaming) — retries and recovers cleanly", async () => {
+    // Root-cause gap found while investigating GOAWAY/connection-reset
+    // reports: the streaming path already retried a connection dropped
+    // before headers, but the non-streaming path had no try/catch around
+    // the fetch() call at all — a reset here threw uncaught and skipped
+    // retry entirely, unlike the streaming path. This reproduces that case
+    // for a non-streaming caller (e.g. embeddings, graphiti-core).
+    let attempt = 0;
+    mock.setHandler(async (_req, res) => {
+      attempt++;
+      if (attempt === 1) {
+        // Simulate Snowflake resetting the connection before any response.
+        res.destroy();
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ data: [{ embedding: [0.1, 0.2], index: 0 }] }));
+    });
+
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/v1/embeddings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: ["hello"], model: "snowflake-arctic-embed-m-v1.5" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(attempt).toBe(2); // one dropped attempt, one clean retry
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -436,6 +465,37 @@ describe("POST /api/v2/cortex/v1/chat/completions", () => {
     expect(upstreamBody["max_tokens"]).toBeUndefined();
     expect(upstreamBody["max_completion_tokens"]).toBe(100);
     expect(upstreamBody["model"]).toBe("openai-gpt-5-mini");
+  });
+
+  test("connection reset before headers (non-streaming) — retries and recovers cleanly", async () => {
+    // proxyRequest()'s non-streaming loop previously called _snowflakeFetch()
+    // with no try/catch: a connection reset before headers arrived (the same
+    // 392606/GOAWAY failure mode already retried on the streaming path) threw
+    // uncaught and skipped retry entirely, surfacing as an immediate 500 with
+    // zero retries. This reproduces that case on a non-streaming request.
+    let attempt = 0;
+    mock.setHandler(async (_req, res) => {
+      attempt++;
+      if (attempt === 1) {
+        res.destroy();
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ id: "chat_test", choices: [] }));
+    });
+
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/api/v2/cortex/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openai-gpt-5-mini",
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(attempt).toBe(2); // one dropped attempt, one clean retry
+    expect(res.headers.get("x-retry-count")).toBe("1");
   });
 
   test("streaming passthrough — content-type: text/event-stream", async () => {
